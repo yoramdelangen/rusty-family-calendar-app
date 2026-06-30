@@ -82,9 +82,12 @@ impl Node {
             let mut border_paint = Paint::default();
             border_paint.set_color(border_color);
 
-            if let b_top = border.top.into_raw().value()
-                && b_top > 0.0
-            {
+            let b_top = border.top.into_raw().value();
+            let b_bottom = border.bottom.into_raw().value();
+            let b_left = border.left.into_raw().value();
+            let b_right = border.right.into_raw().value();
+
+            if b_top > 0.0 {
                 draw_border(
                     &mut canvas,
                     0.0,
@@ -94,9 +97,8 @@ impl Node {
                     &border_paint,
                 );
             }
-            if let b_bottom = border.bottom.into_raw().value()
-                && b_bottom > 0.0
-            {
+
+            if b_bottom > 0.0 {
                 draw_border(
                     &mut canvas,
                     0.0,
@@ -106,9 +108,8 @@ impl Node {
                     &border_paint,
                 );
             }
-            if let b_left = border.left.into_raw().value()
-                && b_left > 0.0
-            {
+
+            if b_left > 0.0 {
                 draw_border(
                     &mut canvas,
                     0.0,
@@ -118,9 +119,8 @@ impl Node {
                     &border_paint,
                 );
             }
-            if let b_right = border.right.into_raw().value()
-                && b_right > 0.0
-            {
+
+            if b_right > 0.0 {
                 draw_border(
                     &mut canvas,
                     self.rect.width() - b_right,

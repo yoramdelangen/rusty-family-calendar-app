@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use taffy::{FlexDirection, NodeId, TaffyTree, prelude::*};
-use tiny_skia::Point;
+use tiny_skia::{Color, Point};
 
 use crate::node::{Node, NodeKind, NodeName, Style};
 
@@ -32,12 +32,6 @@ impl AppLayout {
             nodes_state: HashMap::new(),
         }
     }
-
-    // pub fn create_leaf(&mut self, style: &Style, parent: Option<NodeId>) -> NodeId {
-    //     self.tree
-    //         .new_leaf(style.clone())
-    //         .expect("failed creating leaf")
-    // }
 
     pub fn create_node(
         &mut self,
@@ -210,8 +204,9 @@ impl AppLayout {
     }
 
     pub(crate) fn draw(&mut self, buffer: &mut [u32], window_width: u32, window_height: u32) {
-        buffer.fill(0);
+        buffer.fill(self.color_to_pixel(Color::WHITE));
 
+        println!("Background color = {}", self.color_to_pixel(Color::WHITE));
 
         for node in self.nodes_state.values_mut() {
             if !node.state.visible {
@@ -252,9 +247,25 @@ impl AppLayout {
                     let r = src[src_i] as u32;
                     let g = src[src_i + 1] as u32;
                     let b = src[src_i + 2] as u32;
+                    let a = src[src_i + 3] as u32;
+
+                    if a == 0 {
+                        continue;
+                    }
+
                     buffer[dst_i] = (r << 16) | (g << 8) | b;
                 }
             }
         }
+    }
+
+    fn color_to_pixel(&self, color: Color) -> u32 {
+        let c = color.to_color_u8();
+
+        let r = c.red() as u32;
+        let g = c.green() as u32;
+        let b = c.blue() as u32;
+
+        (r << 16) | (g << 8) | b
     }
 }
