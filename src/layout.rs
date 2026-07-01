@@ -3,11 +3,15 @@ use std::collections::HashMap;
 use taffy::{FlexDirection, NodeId, TaffyTree, prelude::*};
 use tiny_skia::{Color, Point};
 
-use crate::node::{Node, NodeKind, NodeName, Style};
+use crate::{
+    node::{Node, NodeKind, NodeName, Style},
+    theme::Theme,
+};
 
 type TaffyTreeHouse = TaffyTree<super::node::Node>;
 
 pub(crate) struct AppLayout {
+    pub theme: Theme,
     tree: TaffyTreeHouse,
     root_node: NodeId,
     nodes: HashMap<NodeId, NodeName>,
@@ -15,7 +19,7 @@ pub(crate) struct AppLayout {
 }
 
 impl AppLayout {
-    pub fn new() -> Self {
+    pub fn new(ctheme: Theme) -> Self {
         let mut tree = TaffyTree::new();
 
         let root = tree
@@ -27,6 +31,7 @@ impl AppLayout {
 
         Self {
             tree,
+            theme: ctheme,
             root_node: root,
             nodes: HashMap::new(),
             nodes_state: HashMap::new(),
@@ -107,15 +112,14 @@ impl AppLayout {
                 .expect("failed updating root style");
         }
 
-        // preparing the layout state
         self.prepare_layout_leafs(self.root_node);
 
         self.tree
             .compute_layout(self.root_node, Size::max_content())
             .expect("failed computing layout");
 
-        self.compute_layout_nodes(self.root_node);
         // self.tree.print_tree(self.root_node);
+        self.compute_layout_nodes(self.root_node, Point::zero());
     }
 
     // Prepare the layout before rendering and re-calculating the layout.
@@ -138,26 +142,7 @@ impl AppLayout {
                 // let prev_style = self.tree.style(node_id).expect("missing style").clone();
 
                 self.tree
-                    .set_style(
-                        node_id,
-                        taffy::Style {
-                            // grid_template_rows: if let Some(template) =
-                            //     &node_state.style.grid_template
-                            // {
-                            //     vec![fr(1.0); template.rows]
-                            // } else {
-                            //     vec![]
-                            // },
-                            // grid_template_columns: if let Some(template) =
-                            //     &node_state.style.grid_template
-                            // {
-                            //     vec![fr(1.0); template.columns]
-                            // } else {
-                            //     vec![]
-                            // },
-                            ..node_state.style.layout.clone()
-                        },
-                    )
+                    .set_style(node_id, node_state.style.layout.clone())
                     .expect("failed updating leaf style");
             }
 
@@ -165,7 +150,7 @@ impl AppLayout {
         }
     }
 
-    fn compute_layout_nodes(&mut self, id: NodeId) {
+    fn compute_layout_nodes(&mut self, id: NodeId, offset: Point) {
         let children = self
             .tree
             .children(id)
@@ -179,10 +164,23 @@ impl AppLayout {
                 .get_mut(&node_name)
                 .expect("missing node state while computing layout");
 
+            if let NodeName::GridItem(name) = &node_state.name {
+                println!(
+                    "GridItem={} Offset={:?} Dirty = {} Has Pixmap = {}",
+                    name,
+                    node_state.offset,
+                    node_state.dirty_layout,
+                    node_state.pixmap.is_some()
+                );
+            }
+
             if node_state.dirty_layout || self.tree.dirty(node_id).expect("dirty lookup failed") {
                 let node = self.tree.layout(node_id).expect("missing layout node");
-                let offset_x = node.location.x + node.padding.left;
-                let offset_y = node.location.y + node.padding.top;
+
+                println!("a node {:?}", node.location);
+                let offset_x = offset.x + node.location.x + node.padding.left;
+                let offset_y = offset.y + node.location.y + node.padding.top;
+
                 node_state.offset = Point {
                     x: offset_x,
                     y: offset_y,
@@ -199,14 +197,13 @@ impl AppLayout {
                 node_state.dirty_screen = true;
             }
 
-            self.compute_layout_nodes(node_id);
+            let offset = node_state.offset.clone();
+            self.compute_layout_nodes(node_id, offset);
         }
     }
 
     pub(crate) fn draw(&mut self, buffer: &mut [u32], window_width: u32, window_height: u32) {
-        buffer.fill(self.color_to_pixel(Color::WHITE));
-
-        println!("Background color = {}", self.color_to_pixel(Color::WHITE));
+        buffer.fill(self.color_to_pixel(self.theme.surface));
 
         for node in self.nodes_state.values_mut() {
             if !node.state.visible {
@@ -216,8 +213,6 @@ impl AppLayout {
             if node.dirty_screen || node.pixmap.is_none() {
                 node.draw();
             }
-
-            println!("Node = {:?}", &node);
 
             let Some(pixmap) = &node.pixmap else {
                 continue;
@@ -265,7 +260,9 @@ impl AppLayout {
         let r = c.red() as u32;
         let g = c.green() as u32;
         let b = c.blue() as u32;
+        let _a = c.alpha() as u32;
 
+        // TODO: fix alpha coloring
         (r << 16) | (g << 8) | b
     }
 }

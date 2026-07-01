@@ -1,14 +1,18 @@
 pub mod builder;
+pub mod grid_builder;
 
 use tiny_skia::{Color, Paint, Pixmap, Point, Transform};
+
+use crate::node::grid_builder::GridConfig;
 
 #[derive(Clone, Debug)]
 pub enum NodeKind {
     Container,
-    Text(String),
+    // Text(String),
     // Image(ImageNodeId),
     // Canvas(CanvasNodeId),
-    // Grid(CanvasNodeId),
+    Grid(GridConfig),
+    GridItem,
 }
 
 #[derive(Debug)]
@@ -44,8 +48,7 @@ impl Node {
     }
 
     pub fn draw(&mut self) {
-        println!("Draw node {}", self.name);
-        if !self.dirty_screen {
+        if !self.dirty_screen && !self.dirty_layout {
             return;
         }
 
@@ -62,22 +65,6 @@ impl Node {
 
         let border = self.style.layout.border;
 
-        fn draw_border(
-            canvas: &mut Pixmap,
-            x: f32,
-            y: f32,
-            width: f32,
-            height: f32,
-            color: &Paint,
-        ) {
-            canvas.fill_rect(
-                tiny_skia::Rect::from_xywh(x, y, width, height).expect("invalid border rect"),
-                color,
-                Transform::identity(),
-                None,
-            );
-        }
-
         if let Some(border_color) = self.style.border_color {
             let mut border_paint = Paint::default();
             border_paint.set_color(border_color);
@@ -87,54 +74,71 @@ impl Node {
             let b_left = border.left.into_raw().value();
             let b_right = border.right.into_raw().value();
 
-            if b_top > 0.0 {
-                draw_border(
-                    &mut canvas,
-                    0.0,
-                    0.0,
-                    self.rect.width(),
-                    b_top,
-                    &border_paint,
-                );
-            }
+            draw_border(
+                &mut canvas,
+                0.0,
+                0.0,
+                self.rect.width(),
+                b_top,
+                b_top,
+                &border_paint,
+            );
 
-            if b_bottom > 0.0 {
-                draw_border(
-                    &mut canvas,
-                    0.0,
-                    self.rect.height() - b_bottom,
-                    self.rect.width(),
-                    b_bottom,
-                    &border_paint,
-                );
-            }
+            draw_border(
+                &mut canvas,
+                0.0,
+                self.rect.height() - b_bottom,
+                self.rect.width(),
+                b_bottom,
+                b_bottom,
+                &border_paint,
+            );
 
-            if b_left > 0.0 {
-                draw_border(
-                    &mut canvas,
-                    0.0,
-                    0.0,
-                    b_left,
-                    self.rect.height(),
-                    &border_paint,
-                );
-            }
+            draw_border(
+                &mut canvas,
+                0.0,
+                0.0,
+                b_left,
+                self.rect.height(),
+                b_left,
+                &border_paint,
+            );
 
-            if b_right > 0.0 {
-                draw_border(
-                    &mut canvas,
-                    self.rect.width() - b_right,
-                    0.0,
-                    b_right,
-                    self.rect.height(),
-                    &border_paint,
-                );
-            }
+            draw_border(
+                &mut canvas,
+                self.rect.width() - b_right,
+                0.0,
+                b_right,
+                self.rect.height(),
+                b_right,
+                &border_paint,
+            );
         }
 
         self.pixmap = Some(canvas);
         self.dirty_screen = false;
     }
+}
+
+fn draw_border(
+    canvas: &mut Pixmap,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    size: f32,
+    color: &Paint,
+) {
+    if size <= 0. {
+        return;
+    }
+
+    canvas.fill_rect(
+        tiny_skia::Rect::from_xywh(x, y, width, height).expect("invalid border rect"),
+        color,
+        Transform::identity(),
+        None,
+    );
 }
 
 #[derive(Debug, Clone)]
@@ -186,6 +190,7 @@ pub enum NodeName {
     Footer,
     Content,
     Grid(String),
+    GridItem(String),
     Other(String),
     NoName,
 }
@@ -205,6 +210,7 @@ impl std::fmt::Display for NodeName {
             NodeName::Grid(id) => write!(f, "GRID[{id}]"),
             NodeName::Other(id) => write!(f, "OTHER[{id}]"),
             NodeName::NoName => f.write_str("NAMELESS"),
+            NodeName::GridItem(id) => write!(f, "GRID_ITEM[{id}]"),
         }
     }
 }

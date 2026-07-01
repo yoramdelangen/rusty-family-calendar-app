@@ -1349,6 +1349,7 @@ version = "0.1.0"
 dependencies = [
  "cosmic-text",
  "drm 0.15.0",
+ "once_cell",
  "softbuffer",
  "taffy",
  "tiny-skia 0.12.0",

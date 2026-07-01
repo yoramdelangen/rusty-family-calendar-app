@@ -22,16 +22,12 @@ brew install arm-linux-gnueabihf-binutils
 
 Input is intentionally disabled right now on both backends.
 
-## Remote Pi Build
+## Theme
 
-```bash
-./build-pi-remote.sh
-```
+- https://crates.io/crates/tinty
 
-Defaults:
 
-```bash
-REMOTE=yoram@192.168.0.29
-REMOTE_DIR=~/rusty-calendar-pi
-TARGET=arm-unknown-linux-gnueabihf
-```
+## Alternatives
+
+- [`embedded-graphics`](https://docs.rs/embedded-graphics/latest/embedded_graphics/examples/index.html#draw-a-rectangle-with-rounded-corners)
+
