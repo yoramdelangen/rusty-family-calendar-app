@@ -24,7 +24,7 @@ pub struct Builder {
 impl Builder {
     pub fn new(kind: NodeKind, parent_node: Option<NodeId>) -> Self {
         Self {
-            name: NodeName::NoName,
+            name: NodeName::default(),
             kind,
             style: Style::default(),
             parent_node,
@@ -143,6 +143,18 @@ impl Builder {
         self.border_r(1.)
     }
 
+    pub fn px(mut self, size: f32) -> Self {
+        self.style.layout.padding.left = length(size);
+        self.style.layout.padding.right = length(size);
+        self
+    }
+
+    pub fn py(mut self, size: f32) -> Self {
+        self.style.layout.padding.top = length(size);
+        self.style.layout.padding.bottom = length(size);
+        self
+    }
+
     // --- CHILDREN HELPERS
     pub fn child(mut self, child: Builder) -> Self {
         self.children.push(child);
@@ -157,6 +169,10 @@ impl Builder {
     pub fn layout(mut self, f: impl FnOnce(&mut taffy::Style)) -> Self {
         f(&mut self.style.layout);
         self
+    }
+
+    pub fn set_layout(&mut self, f: impl FnOnce(&mut taffy::Style)) {
+        f(&mut self.style.layout);
     }
 
     pub fn style(mut self, f: impl FnOnce(&mut Style)) -> Self {

@@ -1,4 +1,4 @@
-use crate::node::{NodeKind, NodeName, builder::Builder, grid_builder::GridBuilder};
+use crate::node::{NodeKind, NodeName, builder::Builder, grid_builder::GridBuilder, next_node_id};
 
 pub fn div() -> Builder {
     Builder::new(NodeKind::Container, None).width_full()
@@ -10,7 +10,7 @@ pub fn grid(name: &str, columns: usize, rows: Option<usize>) -> GridBuilder {
 
 pub fn grid_item(name: &str) -> Builder {
     Builder::new(NodeKind::GridItem, None)
-        .name(NodeName::GridItem(name.to_owned()))
+        .name(NodeName::GridItem(format!("{}-{}", name, next_node_id())))
         // .width_full()
         // .background(THEME.raw.base09)
         // .border_color(THEME.raw.base08)

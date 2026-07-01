@@ -5,6 +5,13 @@ use tiny_skia::{Color, Paint, Pixmap, Point, Transform};
 
 use crate::node::grid_builder::GridConfig;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT: AtomicU64 = AtomicU64::new(0);
+pub fn next_node_id() -> u64 {
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 #[derive(Clone, Debug)]
 pub enum NodeKind {
     Container,
@@ -192,12 +199,12 @@ pub enum NodeName {
     Grid(String),
     GridItem(String),
     Other(String),
-    NoName,
+    NoName(u64),
 }
 
 impl Default for NodeName {
     fn default() -> Self {
-        NodeName::NoName
+        NodeName::NoName(next_node_id())
     }
 }
 
@@ -209,7 +216,7 @@ impl std::fmt::Display for NodeName {
             NodeName::Content => f.write_str("CONTENT"),
             NodeName::Grid(id) => write!(f, "GRID[{id}]"),
             NodeName::Other(id) => write!(f, "OTHER[{id}]"),
-            NodeName::NoName => f.write_str("NAMELESS"),
+            NodeName::NoName(id) => write!(f, "NAMELESS[{id}]"), //f.write_str("NAMELESS"),
             NodeName::GridItem(id) => write!(f, "GRID_ITEM[{id}]"),
         }
     }

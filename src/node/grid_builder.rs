@@ -62,6 +62,14 @@ impl GridBuilder {
         self.builder.style.border_color = Some(color);
         self
     }
+
+    pub fn foreach_children(mut self, mut cb: impl FnMut(&mut Builder, usize)) -> Self {
+        // self.children.iter_mut().for_each(cb);
+        for (i, child) in &mut self.children.iter_mut().enumerate() {
+            cb(child, i);
+        }
+        self
+    }
 }
 
 impl BobTheBuilder for GridBuilder {

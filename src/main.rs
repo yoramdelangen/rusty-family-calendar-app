@@ -4,11 +4,8 @@ mod node;
 mod renderer;
 mod theme;
 
-use std::cell::LazyCell;
-use std::sync::Once;
-
 use once_cell::sync::Lazy;
-use taffy::NodeId;
+use taffy::{FlexDirection, NodeId};
 
 use crate::node::builder::BobTheBuilder;
 use crate::{components::div, layout::AppLayout};
@@ -68,13 +65,26 @@ fn main() {
 
     let (_header, content, _footer) = build_layout(&mut layout);
 
-    let cal = components::grid("calendar", 7, Some(4))
+    components::grid("calendar", 7, Some(4))
         .border_color(layout.theme.border)
-        .parent_node(content);
-
-    cal.build(&mut layout);
-
-    // building elements on the page
+        .parent_node(content)
+        .foreach_children(|kid, i| {
+            println!("Modify kid {}", kid.name);
+            kid.set_layout(|l| {
+                l.flex_direction = FlexDirection::Column;
+            });
+            kid.add_child(
+                div()
+                    .px(5.)
+                    .py(5.)
+                    .name(node::NodeName::Other(
+                        format!("calendar-header_{}", i).to_owned(),
+                    ))
+                    .border_b_1()
+                    .border_color(THEME.border),
+            );
+        })
+        .build(&mut layout);
 
     renderer::run(layout);
 }

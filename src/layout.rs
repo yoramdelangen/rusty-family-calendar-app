@@ -62,6 +62,15 @@ impl AppLayout {
             .expect("Cannot add child to parent");
 
         let node = Node::new(node_id, name, kind, style);
+
+        // warning if the node-name already exists
+        if self.nodes_state.contains_key(&node.name) {
+            println!(
+                "WARN: there is already a node with name {} in the list",
+                node.name
+            );
+        }
+
         self.nodes.insert(node_id, node.name.clone());
         self.nodes_state.insert(node.name.clone(), node);
 
@@ -118,8 +127,8 @@ impl AppLayout {
             .compute_layout(self.root_node, Size::max_content())
             .expect("failed computing layout");
 
-        // self.tree.print_tree(self.root_node);
         self.compute_layout_nodes(self.root_node, Point::zero());
+        self.tree.print_tree(self.root_node);
     }
 
     // Prepare the layout before rendering and re-calculating the layout.
@@ -164,20 +173,19 @@ impl AppLayout {
                 .get_mut(&node_name)
                 .expect("missing node state while computing layout");
 
-            if let NodeName::GridItem(name) = &node_state.name {
-                println!(
-                    "GridItem={} Offset={:?} Dirty = {} Has Pixmap = {}",
-                    name,
-                    node_state.offset,
-                    node_state.dirty_layout,
-                    node_state.pixmap.is_some()
-                );
-            }
+            // if let NodeName::GridItem(name) = &node_state.name {
+            //     println!(
+            //         "GridItem={} Offset={:?} Dirty = {} Has Pixmap = {}",
+            //         name,
+            //         node_state.offset,
+            //         node_state.dirty_layout,
+            //         node_state.pixmap.is_some()
+            //     );
+            // }
 
             if node_state.dirty_layout || self.tree.dirty(node_id).expect("dirty lookup failed") {
                 let node = self.tree.layout(node_id).expect("missing layout node");
 
-                println!("a node {:?}", node.location);
                 let offset_x = offset.x + node.location.x + node.padding.left;
                 let offset_y = offset.y + node.location.y + node.padding.top;
 
