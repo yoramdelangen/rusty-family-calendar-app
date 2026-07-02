@@ -86,7 +86,7 @@ impl Theme {
 
             primary: b.base0d,
             success: b.base0b,
-            warning: b.base0a,
+            warning: b.base09,
             danger: b.base08,
         }
     }
