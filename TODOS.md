@@ -1,6 +1,6 @@
-## TODOS
+# TODOS
 
-- [ ] Padding is not applied for all elements.
+- [x] Padding is not applied for all elements.
 - [ ] Text color is not correctly drawn.
 - [ ] Add active state for header.
 - [ ] Add text_alignment for nodes.

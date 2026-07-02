@@ -114,7 +114,13 @@ impl FontTheme {
                 paint.set_color_rgba8(color.r(), color.g(), color.b(), color.a());
 
                 canvas.fill_rect(
-                    tiny_skia::Rect::from_xywh(x as f32, y as f32, w as f32, h as f32).unwrap(),
+                    tiny_skia::Rect::from_xywh(
+                        (x as f32) + padding_left,
+                        (y as f32) + padding_top,
+                        w as f32,
+                        h as f32,
+                    )
+                    .unwrap(),
                     &paint,
                     Transform::identity(),
                     None,
