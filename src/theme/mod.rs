@@ -1,4 +1,31 @@
+pub mod font;
+
+use once_cell::sync::Lazy;
 use tiny_skia::Color;
+
+pub(crate) static THEME: Lazy<Theme> = Lazy::new(|| {
+    let base16_light = Base16 {
+        base00: hex(0xeff1f5),
+        base01: hex(0xe6e9ef),
+        base02: hex(0xccd0da),
+        base03: hex(0xbcc0cc),
+        base04: hex(0xacb0be),
+        base05: hex(0x4c4f69),
+        base06: hex(0xdc8a78),
+        base07: hex(0x7287fd),
+        base08: hex(0xd20f39),
+        base09: hex(0xfe640b),
+        base0a: hex(0xdf8e1d),
+        base0b: hex(0x40a02b),
+        base0c: hex(0x179299),
+        base0d: hex(0x1e66f5),
+        base0e: hex(0x8839ef),
+        base0f: hex(0xdd7878),
+    };
+
+    println!("Base05 color = {:?}", hex(0x4c4f69));
+    Theme::from_base16(base16_light)
+});
 
 #[derive(Clone, Copy)]
 pub struct Base16 {
@@ -107,7 +134,7 @@ impl HexColor {
         if self.is_from_rgba {
             ((self.value >> 8) & 0xFF) as u8
         } else {
-            (self.value >> 8) as u8
+            self.value as u8
         }
     }
 
@@ -126,15 +153,6 @@ impl HexColor {
 
 impl From<HexColor> for Color {
     fn from(c: HexColor) -> Self {
-        // println!(
-        //     "Hex {} to rgba r={} g={} b={} a={}",
-        //     c.value,
-        //     c.red(),
-        //     c.green(),
-        //     c.blue(),
-        //     c.alpha()
-        // );
-        //
         Self::from_rgba8(c.red(), c.green(), c.blue(), c.alpha())
     }
 }
@@ -143,6 +161,6 @@ pub fn hex(val: u32) -> Color {
     HexColor::from_rgb(val).into()
 }
 
-pub fn hex_alpha(val: u32) -> Color {
-    HexColor::from_rgba(val).into()
-}
+// pub fn hex_alpha(val: u32) -> Color {
+//     HexColor::from_rgba(val).into()
+// }

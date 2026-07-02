@@ -3,10 +3,13 @@ pub mod grid_builder;
 
 use tiny_skia::{Color, Paint, Pixmap, Point, Transform};
 
-use crate::node::grid_builder::GridConfig;
+use crate::{
+    THEME,
+    node::grid_builder::GridConfig,
+    theme::font::{FONT, FontSize},
+};
 
 use std::sync::atomic::{AtomicU64, Ordering};
-
 static NEXT: AtomicU64 = AtomicU64::new(0);
 pub fn next_node_id() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
@@ -15,7 +18,7 @@ pub fn next_node_id() -> u64 {
 #[derive(Clone, Debug)]
 pub enum NodeKind {
     Container,
-    // Text(String),
+    Text(String),
     // Image(ImageNodeId),
     // Canvas(CanvasNodeId),
     Grid(GridConfig),
@@ -71,7 +74,6 @@ impl Node {
         }
 
         let border = self.style.layout.border;
-
         if let Some(border_color) = self.style.border_color {
             let mut border_paint = Paint::default();
             border_paint.set_color(border_color);
@@ -122,6 +124,13 @@ impl Node {
             );
         }
 
+        match &self.kind {
+            NodeKind::Container => {}
+            NodeKind::Text(content) => FONT.draw_on_canvas(&mut canvas, &self, content),
+            NodeKind::Grid(_) => {}
+            NodeKind::GridItem => {}
+        };
+
         self.pixmap = Some(canvas);
         self.dirty_screen = false;
     }
@@ -154,9 +163,10 @@ pub struct Style {
 
     pub background_color: Option<Color>,
     pub text_color: Color,
+    pub font_size: FontSize,
     pub border_color: Option<Color>,
-    pub border_radius: f32,
-    pub opacity: f32,
+    // pub border_radius: f32,
+    // pub opacity: f32,
 }
 
 impl Default for Style {
@@ -164,10 +174,11 @@ impl Default for Style {
         Self {
             layout: taffy::Style::default(),
             background_color: None, // Color::TRANSPARENT,
-            text_color: Color::BLACK,
-            border_color: None, // Color::TRANSPARENT,
-            border_radius: 0.0,
-            opacity: 1.0,
+            border_color: None,     // Color::TRANSPARENT,
+            text_color: THEME.text,
+            font_size: FONT.base.clone(),
+            // border_radius: 0.0,
+            // opacity: 1.0,
         }
     }
 }
@@ -193,6 +204,7 @@ impl Default for State {
 
 #[derive(Eq, Hash, PartialEq, Clone, Debug)]
 pub enum NodeName {
+    Root,
     Header,
     Footer,
     Content,
@@ -208,15 +220,22 @@ impl Default for NodeName {
     }
 }
 
+impl NodeName {
+    pub fn other(name: impl Into<String>) -> Self {
+        NodeName::Other(name.into())
+    }
+}
+
 impl std::fmt::Display for NodeName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            NodeName::Root => f.write_str("ROOT"),
             NodeName::Header => f.write_str("HEADER"),
             NodeName::Footer => f.write_str("FOOTER"),
             NodeName::Content => f.write_str("CONTENT"),
             NodeName::Grid(id) => write!(f, "GRID[{id}]"),
             NodeName::Other(id) => write!(f, "OTHER[{id}]"),
-            NodeName::NoName(id) => write!(f, "NAMELESS[{id}]"), //f.write_str("NAMELESS"),
+            NodeName::NoName(id) => write!(f, "NAMELESS[{id}]"),
             NodeName::GridItem(id) => write!(f, "GRID_ITEM[{id}]"),
         }
     }

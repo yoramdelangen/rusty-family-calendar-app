@@ -4,7 +4,7 @@ use taffy::{
 };
 use tiny_skia::Color;
 
-use crate::{layout::AppLayout, node::NodeName};
+use crate::{layout::AppLayout, node::NodeName, theme::font::FontSize};
 
 use super::{NodeKind, Style};
 
@@ -163,6 +163,15 @@ impl Builder {
 
     pub fn add_child(&mut self, child: Builder) {
         self.children.push(child);
+    }
+
+    // --- FONT HELPERS
+    pub fn font_size(mut self, fs: FontSize) -> Self {
+        self.style.font_size = fs;
+        self
+    }
+    pub fn set_font_size(&mut self, fs: FontSize) {
+        self.style.font_size = fs;
     }
 
     // --- HELPER FN's

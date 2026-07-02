@@ -5,13 +5,12 @@ use tiny_skia::{Color, Point};
 
 use crate::{
     node::{Node, NodeKind, NodeName, Style},
-    theme::Theme,
+    theme::{THEME, font::FONT},
 };
 
-type TaffyTreeHouse = TaffyTree<super::node::Node>;
+type TaffyTreeHouse = TaffyTree<super::node::NodeName>;
 
 pub(crate) struct AppLayout {
-    pub theme: Theme,
     tree: TaffyTreeHouse,
     root_node: NodeId,
     nodes: HashMap<NodeId, NodeName>,
@@ -19,19 +18,21 @@ pub(crate) struct AppLayout {
 }
 
 impl AppLayout {
-    pub fn new(ctheme: Theme) -> Self {
+    pub fn new() -> Self {
         let mut tree = TaffyTree::new();
 
         let root = tree
-            .new_leaf(taffy::Style {
-                flex_direction: FlexDirection::Column,
-                ..Default::default()
-            })
+            .new_leaf_with_context(
+                taffy::Style {
+                    flex_direction: FlexDirection::Column,
+                    ..Default::default()
+                },
+                NodeName::Root,
+            )
             .expect("failed to create root");
 
         Self {
             tree,
-            theme: ctheme,
             root_node: root,
             nodes: HashMap::new(),
             nodes_state: HashMap::new(),
@@ -47,7 +48,7 @@ impl AppLayout {
     ) -> NodeId {
         let node_id = self
             .tree
-            .new_leaf(style.layout.clone())
+            .new_leaf_with_context(style.layout.clone(), name.clone())
             .expect("failed creating leaf");
 
         self.tree
@@ -124,11 +125,37 @@ impl AppLayout {
         self.prepare_layout_leafs(self.root_node);
 
         self.tree
-            .compute_layout(self.root_node, Size::max_content())
+            .compute_layout_with_measure(
+                self.root_node,
+                Size::MAX_CONTENT,
+                |known_dimensions, available_space, node_id, node_context, style| {
+                    let Some(node_name) = node_context else {
+                        unreachable!();
+                    };
+
+                    let node = self
+                        .nodes_state
+                        .get(&node_name)
+                        .expect(format!("Cannot measure NodeName {}", node_name).as_str());
+
+                    calculate_layout_measurement(
+                        known_dimensions,
+                        available_space,
+                        node_id,
+                        node,
+                        node_name,
+                        style,
+                    )
+                },
+            )
             .expect("failed computing layout");
 
+        // self.tree
+        //     .compute_layout(self.root_node, Size::max_content())
+        //     .expect("failed computing layout");
+
         self.compute_layout_nodes(self.root_node, Point::zero());
-        self.tree.print_tree(self.root_node);
+        // self.tree.print_tree(self.root_node);
     }
 
     // Prepare the layout before rendering and re-calculating the layout.
@@ -148,8 +175,6 @@ impl AppLayout {
                 .expect("missing node state while computing layout");
 
             if node_state.dirty_layout || self.tree.dirty(node_id).expect("dirty lookup failed") {
-                // let prev_style = self.tree.style(node_id).expect("missing style").clone();
-
                 self.tree
                     .set_style(node_id, node_state.style.layout.clone())
                     .expect("failed updating leaf style");
@@ -207,11 +232,12 @@ impl AppLayout {
 
             let offset = node_state.offset.clone();
             self.compute_layout_nodes(node_id, offset);
+            // self.tree.print_tree(self.root_node);
         }
     }
 
     pub(crate) fn draw(&mut self, buffer: &mut [u32], window_width: u32, window_height: u32) {
-        buffer.fill(self.color_to_pixel(self.theme.surface));
+        buffer.fill(self.color_to_pixel(THEME.surface));
 
         for node in self.nodes_state.values_mut() {
             if !node.state.visible {
@@ -272,5 +298,36 @@ impl AppLayout {
 
         // TODO: fix alpha coloring
         (r << 16) | (g << 8) | b
+    }
+}
+
+fn calculate_layout_measurement(
+    known: Size<Option<f32>>,
+    available_space: Size<AvailableSpace>,
+    _node_id: NodeId,
+    node: &Node,
+    _node_name: &mut NodeName,
+    _style: &taffy::Style,
+) -> Size<f32> {
+    match &node.kind {
+        NodeKind::Text(content) => {
+            // println!("============");
+            // println!("Known = {:?}", known);
+            // println!("Content = {:?}", content);
+            // println!("AvailableSpace = {:?}", available_space);
+            // println!("Node = {:?}", node.style);
+
+            // get max available with
+            let max_width = match available_space.width {
+                AvailableSpace::Definite(w) => Some(w),
+                _ => None,
+            };
+
+            FONT.measure_text(&content, &node.style.font_size, max_width)
+        }
+        _ => Size {
+            width: known.width.unwrap_or(0.0),
+            height: known.height.unwrap_or(0.0),
+        },
     }
 }
