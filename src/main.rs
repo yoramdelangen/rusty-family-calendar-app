@@ -4,24 +4,30 @@ mod node;
 mod renderer;
 mod theme;
 
-use taffy::{FlexDirection, NodeId};
+use chrono::{DateTime, Datelike, Days, Local, NaiveDate, Weekday};
+use taffy::prelude::fit_content;
+use taffy::{FlexDirection, NodeId, Size};
+use tiny_skia::Color;
 
 use crate::components::text;
 use crate::node::builder::BobTheBuilder;
 use crate::theme::THEME;
+use crate::theme::font::FONT;
 use crate::{components::div, layout::AppLayout};
 
 fn build_layout(layout: &mut AppLayout) -> (NodeId, NodeId, NodeId) {
     let header = div()
         .border_color(THEME.border)
         .name(node::NodeName::Header)
-        .height(38.0)
+        .height(64.0)
         .border_b(1.0)
         .build(layout);
 
     let content = div()
         .name(node::NodeName::Content)
         .width_full()
+        .flex_dir_column()
+        // .block()
         .layout(|l| {
             l.flex_grow = 1.0;
             l.flex_shrink = 1.0;
@@ -31,7 +37,7 @@ fn build_layout(layout: &mut AppLayout) -> (NodeId, NodeId, NodeId) {
     let footer = div()
         .name(node::NodeName::Footer)
         .width_full()
-        .height(38.0)
+        .height(32.0)
         .border_color(THEME.border)
         .border_t(1.)
         .build(layout);
@@ -39,30 +45,76 @@ fn build_layout(layout: &mut AppLayout) -> (NodeId, NodeId, NodeId) {
     (header, content, footer)
 }
 
+const CAL_COLS: usize = 7;
+const CAL_ROWS: usize = 4;
+
 fn main() {
     let mut layout = AppLayout::new();
 
     let (_header, content, _footer) = build_layout(&mut layout);
 
+    let headers = get_weekdays();
+    components::grid("calendar_weekday", 7, Some(1))
+        .height_auto()
+        .flex_no_grow()
+        .border_color(THEME.border)
+        .border_b(1.)
+        .background(THEME.warning)
+        .children(
+            headers
+                .iter()
+                .map(|day| {
+                    text(day)
+                        .py(5.)
+                        .border_color(THEME.border)
+                        .text_color(Color::WHITE)
+                })
+                .collect(),
+        )
+        .parent_node(content)
+        .build(&mut layout);
+
+    let mut dates = get_dates((CAL_COLS * CAL_ROWS) as u32).into_iter();
     components::grid("calendar", 7, Some(4))
         .border_color(THEME.border)
+        .height_full()
         .parent_node(content)
-        .foreach_children(|kid, i| {
-            println!("Modify kid {}", kid.name);
+        .foreach_children(|kid, _i| {
             kid.set_layout(|l| {
                 l.flex_direction = FlexDirection::Column;
             });
-            let label = format!("calendar-header_{}", i).to_owned();
+
+            let date = dates.next().expect("Cannot pop a date");
+            let label = format!("calendar-cell_{}", date).to_owned();
             kid.add_child(
-                text(format!("label {}", i + 1))
-                    .px(5.)
+                text(format!("{}", date.day()))
                     .py(5.)
-                    .name(node::NodeName::other(label))
-                    .border_b_1()
-                    .border_color(THEME.border),
+                    .name(node::NodeName::other(label)),
             );
         })
         .build(&mut layout);
 
     renderer::run(layout);
+}
+
+fn get_weekdays() -> Vec<String> {
+    vec!["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"]
+        .iter_mut()
+        .map(|v| v.to_owned())
+        .collect()
+}
+
+fn get_dates(how_many: u32) -> Vec<NaiveDate> {
+    let local: DateTime<Local> = Local::now();
+    let week = local.iso_week().week();
+    let begin = NaiveDate::from_isoywd_opt(local.year(), week, Weekday::Mon).unwrap();
+
+    let mut dates = Vec::with_capacity(how_many as usize);
+    dates.push(begin);
+    for i in 1..how_many {
+        let next = begin.checked_add_days(Days::new(i.into())).unwrap();
+        dates.push(next);
+    }
+
+    dates
 }

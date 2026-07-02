@@ -198,25 +198,15 @@ impl AppLayout {
                 .get_mut(&node_name)
                 .expect("missing node state while computing layout");
 
-            // if let NodeName::GridItem(name) = &node_state.name {
-            //     println!(
-            //         "GridItem={} Offset={:?} Dirty = {} Has Pixmap = {}",
-            //         name,
-            //         node_state.offset,
-            //         node_state.dirty_layout,
-            //         node_state.pixmap.is_some()
-            //     );
-            // }
-
             if node_state.dirty_layout || self.tree.dirty(node_id).expect("dirty lookup failed") {
                 let node = self.tree.layout(node_id).expect("missing layout node");
 
-                let offset_x = offset.x + node.location.x + node.padding.left;
-                let offset_y = offset.y + node.location.y + node.padding.top;
+                let offset_x = offset.x + node.location.x;
+                let offset_y = offset.y + node.location.y;
 
                 node_state.offset = Point {
-                    x: offset_x,
-                    y: offset_y,
+                    x: offset_x + node.padding.left,
+                    y: offset_y + node.padding.top,
                 };
                 node_state.rect = tiny_skia::Rect::from_xywh(
                     offset_x,
@@ -239,9 +229,49 @@ impl AppLayout {
     pub(crate) fn draw(&mut self, buffer: &mut [u32], window_width: u32, window_height: u32) {
         buffer.fill(self.color_to_pixel(THEME.surface));
 
-        for node in self.nodes_state.values_mut() {
+        // println!("Draw all nodes = {:?}", self.nodes_state);
+
+        struct WindowSize {
+            width: u32,
+            height: u32,
+        }
+
+        let window = WindowSize {
+            width: window_width,
+            height: window_height,
+        };
+
+        // draw nodes to screen, starting with root
+        let mut stack = vec![self.root_node];
+        while let Some(taffy_id) = stack.pop() {
+            let Some(taffy_node) = self.tree.get_node_context(taffy_id) else {
+                unreachable!();
+            };
+
+            // early look for kids
+            // pop, pops an element from the end of the vector
+            if let Ok(children) = self.tree.children(taffy_id) {
+                for child in children.iter().rev() {
+                    stack.push(*child);
+                }
+            }
+
+            let Some(node) = self.nodes_state.get_mut(taffy_node) else {
+                if taffy_id != self.root_node {
+                    unreachable!("Failed to fetch node from nodes_state");
+                } else {
+                    // skip drawing
+                    continue;
+                }
+            };
+
+            internal_draw(buffer, node, &window);
+        }
+
+        // internal draw function, so we can iterative do rendering
+        fn internal_draw(buffer: &mut [u32], node: &mut Node, window: &WindowSize) {
             if !node.state.visible {
-                continue;
+                return;
             }
 
             if node.dirty_screen || node.pixmap.is_none() {
@@ -249,7 +279,7 @@ impl AppLayout {
             }
 
             let Some(pixmap) = &node.pixmap else {
-                continue;
+                return;
             };
 
             let src_w = pixmap.width();
@@ -260,18 +290,18 @@ impl AppLayout {
 
             for row in 0..src_h {
                 let screen_y = dst_y + row;
-                if screen_y >= window_height {
+                if screen_y >= window.height {
                     break;
                 }
 
                 for col in 0..src_w {
                     let screen_x = dst_x + col;
-                    if screen_x >= window_width {
+                    if screen_x >= window.width {
                         break;
                     }
 
                     let src_i = ((row * src_w + col) * 4) as usize;
-                    let dst_i = (screen_y * window_width + screen_x) as usize;
+                    let dst_i = (screen_y * window.width + screen_x) as usize;
 
                     let r = src[src_i] as u32;
                     let g = src[src_i + 1] as u32;

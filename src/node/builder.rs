@@ -1,5 +1,5 @@
 use taffy::{
-    Display, NodeId,
+    Display, FlexDirection, NodeId,
     prelude::{auto, length, percent},
 };
 use tiny_skia::Color;
@@ -46,26 +46,35 @@ impl Builder {
         self
     }
 
-    // --- SIZINGS: width, height
-    pub fn parent_node(mut self, parent: NodeId) -> Self {
-        self.parent_node = Some(parent);
+    // pub fn block(self) -> Self {
+    //     self.display(Display::Block)
+    // }
+
+    pub fn flex_dir_column(mut self) -> Self {
+        self.style.layout.flex_direction = FlexDirection::Column;
         self
     }
 
-    pub fn width(mut self, width: f32) -> Self {
-        self.style.layout.size.width = taffy::Dimension::length(width);
-        self
-    }
+    // // --- SIZINGS: width, height
+    // pub fn parent_node(mut self, parent: NodeId) -> Self {
+    //     self.parent_node = Some(parent);
+    //     self
+    // }
+    //
+    // pub fn width(mut self, width: f32) -> Self {
+    //     self.style.layout.size.width = taffy::Dimension::length(width);
+    //     self
+    // }
 
     pub fn width_full(mut self) -> Self {
         self.style.layout.size.width = percent(1.);
         self
     }
 
-    pub fn width_auto(mut self) -> Self {
-        self.style.layout.size.width = auto();
-        self
-    }
+    // pub fn width_auto(mut self) -> Self {
+    //     self.style.layout.size.width = auto();
+    //     self
+    // }
 
     pub fn height(mut self, height: f32) -> Self {
         self.style.layout.size.height = taffy::Dimension::length(height);
@@ -107,6 +116,10 @@ impl Builder {
         self.style.layout.border.bottom = length(size);
         self
     }
+    pub fn set_border_b(&mut self, size: f32) {
+        self.style.layout.border.bottom = length(size);
+    }
+
     pub fn border_b_1(self) -> Self {
         self.border_b(1.)
     }
@@ -163,6 +176,11 @@ impl Builder {
 
     pub fn add_child(&mut self, child: Builder) {
         self.children.push(child);
+    }
+
+    pub fn children(mut self, children: Vec<Builder>) -> Self {
+        self.children = children;
+        self
     }
 
     // --- FONT HELPERS

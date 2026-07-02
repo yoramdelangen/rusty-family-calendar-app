@@ -2,9 +2,10 @@ use std::{num::NonZeroU32, rc::Rc};
 
 use softbuffer::{Context, Surface};
 use taffy::{Size, prelude::length};
+use winit::dpi::{LogicalSize, PhysicalSize};
+use winit::platform::macos::WindowAttributesExtMacOS;
 use winit::{
     application::ApplicationHandler,
-    dpi,
     event::{StartCause, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle},
     window::{Window, WindowId},
@@ -16,8 +17,12 @@ type Winnie = Rc<Window>;
 
 enum AppState {
     Init,
-    Suspended { window: Winnie },
-    Active { surface: Surface<OwnedDisplayHandle, Winnie> },
+    Suspended {
+        window: Winnie,
+    },
+    Active {
+        surface: Surface<OwnedDisplayHandle, Winnie>,
+    },
 }
 
 pub(crate) struct WinitWindowRenderer {
@@ -31,7 +36,10 @@ impl ApplicationHandler for WinitWindowRenderer {
         if let StartCause::Init = cause {
             let window_attrs = Window::default_attributes()
                 .with_title("Rusty Calendar Pi")
-                .with_inner_size(dpi::PhysicalSize::new(1920, 1080))
+                .with_title_hidden(true)
+                .with_fullsize_content_view(true)
+                .with_titlebar_transparent(true)
+                .with_inner_size(PhysicalSize::new(1920, 1080))
                 .with_theme(Some(winit::window::Theme::Light));
 
             let window = event_loop
@@ -109,8 +117,12 @@ impl WinitWindowRenderer {
         }
     }
 
-    fn render_and_present(layout: &mut AppLayout, surface: &mut Surface<OwnedDisplayHandle, Winnie>) {
-        let window_size = surface.window().inner_size();
+    fn render_and_present(
+        layout: &mut AppLayout,
+        surface: &mut Surface<OwnedDisplayHandle, Winnie>,
+    ) {
+        let handle = surface.window();
+        let window_size = handle.inner_size();
         layout.render_layout(Size {
             width: length(window_size.width as f32),
             height: length(window_size.height as f32),

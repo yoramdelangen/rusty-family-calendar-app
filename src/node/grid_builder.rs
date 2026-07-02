@@ -1,4 +1,7 @@
-use taffy::{Display, NodeId, prelude::fr};
+use taffy::{
+    Dimension, Display, FlexDirection, NodeId, Size,
+    prelude::{auto, fr, length, percent},
+};
 use tiny_skia::Color;
 
 use crate::{
@@ -31,7 +34,7 @@ impl GridBuilder {
             builder: Builder::new(NodeKind::Grid(GridConfig { rows, columns }), None)
                 .name(NodeName::Grid(name.to_owned()))
                 .width_full()
-                .height_full()
+                .height_auto()
                 .display(Display::Grid)
                 .layout(|l| {
                     l.flex_grow = 1.;
@@ -43,7 +46,6 @@ impl GridBuilder {
                 })
                 .border_color(THEME.raw.base09),
             children: if let Some(row_count) = rows {
-                println!("Calculating children amount = {}", columns * row_count);
                 let mut x = Vec::with_capacity(columns * row_count);
                 x.resize_with(columns * row_count, || grid_item("cell"));
                 x
@@ -58,8 +60,53 @@ impl GridBuilder {
         self
     }
 
+    // pub fn flex_dir_column(mut self) -> Self {
+    //     self.builder.style.layout.flex_direction = FlexDirection::Column;
+    //     self
+    // }
+
+    pub fn flex_no_grow(mut self) -> Self {
+        self.builder.style.layout.flex_grow = 0.;
+        self
+    }
+
+    // pub fn height(mut self, height: Dimension) -> Self {
+    //     self.builder.style.layout.size.height = height;
+    //     self
+    // }
+
+    pub fn height_full(mut self) -> Self {
+        self.builder.style.layout.size.height = percent(1.);
+        self
+    }
+
+    pub fn height_auto(mut self) -> Self {
+        self.builder.style.layout.size.height = auto();
+        self
+    }
+
+    pub fn background(mut self, color: Color) -> Self {
+        self.builder.style.background_color = Some(color);
+        self
+    }
+
+    // pub fn width_auto(mut self) -> Self {
+    //     self.builder.style.layout.size.width = auto();
+    //     self
+    // }
+
     pub fn border_color(mut self, color: Color) -> Self {
         self.builder.style.border_color = Some(color);
+        self
+    }
+
+    pub fn border_b(mut self, border: f32) -> Self {
+        self.builder.style.layout.border.bottom = length(border);
+        self
+    }
+
+    pub fn children(mut self, children: Vec<Builder>) -> Self {
+        self.children = children;
         self
     }
 

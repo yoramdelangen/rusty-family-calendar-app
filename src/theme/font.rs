@@ -78,8 +78,8 @@ impl FontTheme {
         let padding = node.style.layout.padding();
         let padding_top = padding.top.into_raw().value();
         let padding_left = padding.left.into_raw().value();
-        let padding_horizontal = padding_left - padding.right.into_raw().value();
-        let padding_vertical = padding_top - padding.bottom.into_raw().value();
+        let padding_horizontal = padding_left + padding.right.into_raw().value();
+        let padding_vertical = padding_top + padding.bottom.into_raw().value();
 
         let mut system = self.system.lock().unwrap();
         let mut cache = self.cache.lock().unwrap();
@@ -100,14 +100,6 @@ impl FontTheme {
         let mut paint = Paint::default();
         paint.anti_alias = true;
         let text_color = node.style.text_color.to_color_u8();
-
-        println!(
-            "Color r={} g={} b={} a={}",
-            text_color.red(),
-            text_color.green(),
-            text_color.blue(),
-            text_color.alpha(),
-        );
 
         buffer.draw(
             &mut system,
