@@ -53,22 +53,18 @@ fn main() {
 
     let (_header, content, _footer) = build_layout(&mut layout);
 
+    let today = Local::now();
+
     let headers = get_weekdays();
-    components::grid("calendar_weekday", 7, Some(1))
+    components::grid("calendar_weekday", 7, None)
         .height_auto()
         .flex_no_grow()
         .border_color(THEME.border)
         .border_b(1.)
-        .background(THEME.warning)
         .children(
             headers
                 .iter()
-                .map(|day| {
-                    text(day)
-                        .py(5.)
-                        .border_color(THEME.border)
-                        .text_color(Color::WHITE)
-                })
+                .map(|day| text(day).py(5.).border_color(THEME.border))
                 .collect(),
         )
         .parent_node(content)
@@ -85,12 +81,23 @@ fn main() {
             });
 
             let date = dates.next().expect("Cannot pop a date");
+
+            if today.date_naive().eq(&date) {
+                println!("TODAY IS THE DAY {}", date);
+            }
+
             let label = format!("calendar-cell_{}", date).to_owned();
-            kid.add_child(
+            kid.add_child(if today.date_naive().eq(&date) {
+                text(format!("VANDAAG! {}", date.day()))
+                    .background(THEME.success)
+                    .text_color(Color::WHITE)
+                    .py(5.)
+                    .name(node::NodeName::other(label))
+            } else {
                 text(format!("{}", date.day()))
                     .py(5.)
-                    .name(node::NodeName::other(label)),
-            );
+                    .name(node::NodeName::other(label))
+            });
         })
         .build(&mut layout);
 

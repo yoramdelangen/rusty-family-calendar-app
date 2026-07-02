@@ -99,7 +99,7 @@ pub struct HexColor {
 }
 
 impl HexColor {
-    /// Accepts hex as 0xRRGGBBAA
+    /// Accepts hex as 0xRRGGBB
     pub fn from_rgb(value: u32) -> Self {
         Self {
             value,
@@ -107,6 +107,7 @@ impl HexColor {
         }
     }
 
+    /// Accepts hex as 0xRRGGBBAA
     pub fn from_rgba(value: u32) -> Self {
         Self {
             value,

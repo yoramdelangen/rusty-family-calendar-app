@@ -312,8 +312,8 @@ impl AppLayout {
                         continue;
                     }
 
-                    // buffer[dst_i] = (r << 16) | (g << 8) | b;
-                    buffer[dst_i] = (r << 24) | (g << 16) | (b << 8) | a;
+                    buffer[dst_i] = (r << 16) | (g << 8) | b;
+                    // buffer[dst_i] = (r << 24) | (g << 16) | (b << 8) | a;
                 }
             }
         }
