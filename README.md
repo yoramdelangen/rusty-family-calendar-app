@@ -26,6 +26,10 @@ Input is intentionally disabled right now on both backends.
 
 - https://crates.io/crates/tinty
 
+## Icons
+
+- https://github.com/carbon-design-system/carbon/tree/main/packages/icons/src/svg
+
 
 ## Alternatives
 

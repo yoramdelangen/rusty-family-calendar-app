@@ -162,6 +162,11 @@ pub fn hex(val: u32) -> Color {
     HexColor::from_rgb(val).into()
 }
 
+pub fn color_to_hex(color: Color) -> String {
+    let c = color.to_color_u8();
+    format!("#{:02X}{:02X}{:02X}", c.red(), c.green(), c.blue())
+}
+
 // pub fn hex_alpha(val: u32) -> Color {
 //     HexColor::from_rgba(val).into()
 // }

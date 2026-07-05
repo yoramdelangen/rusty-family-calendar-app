@@ -1,5 +1,5 @@
 use taffy::{
-    Display, FlexDirection, NodeId,
+    Display, FlexDirection, NodeId, Rect,
     prelude::{auto, length, percent},
 };
 use tiny_skia::Color;
@@ -61,20 +61,20 @@ impl Builder {
     //     self
     // }
     //
-    // pub fn width(mut self, width: f32) -> Self {
-    //     self.style.layout.size.width = taffy::Dimension::length(width);
-    //     self
-    // }
+    pub fn width(mut self, width: f32) -> Self {
+        self.style.layout.size.width = taffy::Dimension::length(width);
+        self
+    }
 
     pub fn width_full(mut self) -> Self {
         self.style.layout.size.width = percent(1.);
         self
     }
 
-    // pub fn width_auto(mut self) -> Self {
-    //     self.style.layout.size.width = auto();
-    //     self
-    // }
+    pub fn width_auto(mut self) -> Self {
+        self.style.layout.size.width = auto();
+        self
+    }
 
     pub fn height(mut self, height: f32) -> Self {
         self.style.layout.size.height = taffy::Dimension::length(height);
@@ -156,6 +156,12 @@ impl Builder {
         self.border_r(1.)
     }
 
+    // https://tailwindcss.com/docs/border-radius
+    pub fn rounded_xl(mut self) -> Self {
+        self.style.border_radius = Rect::length(12.);
+        self
+    }
+
     pub fn px(mut self, size: f32) -> Self {
         self.style.layout.padding.left = length(size);
         self.style.layout.padding.right = length(size);
@@ -183,14 +189,14 @@ impl Builder {
         self
     }
 
-    // --- FONT HELPERS
-    pub fn font_size(mut self, fs: FontSize) -> Self {
-        self.style.font_size = fs;
-        self
-    }
-    pub fn set_font_size(&mut self, fs: FontSize) {
-        self.style.font_size = fs;
-    }
+    // // --- FONT HELPERS
+    // pub fn font_size(mut self, fs: FontSize) -> Self {
+    //     self.style.font_size = fs;
+    //     self
+    // }
+    // pub fn set_font_size(&mut self, fs: FontSize) {
+    //     self.style.font_size = fs;
+    // }
 
     // --- HELPER FN's
     pub fn layout(mut self, f: impl FnOnce(&mut taffy::Style)) -> Self {
@@ -202,10 +208,18 @@ impl Builder {
         f(&mut self.style.layout);
     }
 
-    pub fn style(mut self, f: impl FnOnce(&mut Style)) -> Self {
-        f(&mut self.style);
+    pub fn kind_meta(mut self, f: impl FnOnce(&mut NodeKind)) -> Self {
+        f(&mut self.kind);
         self
     }
+    // pub fn set_kind_meta(&mut self, f: impl FnOnce(&mut NodeKind)) {
+    //     f(&mut self.kind);
+    // }
+
+    // pub fn style(mut self, f: impl FnOnce(&mut Style)) -> Self {
+    //     f(&mut self.style);
+    //     self
+    // }
 }
 
 impl BobTheBuilder for Builder {

@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use taffy::{FlexDirection, NodeId, TaffyTree, prelude::*};
-use tiny_skia::{Color, Point};
+use tiny_skia::{Color, Path, PathBuilder, Point};
 
 use crate::{
+    icons::read_svg,
     node::{Node, NodeKind, NodeName, Style},
     theme::{THEME, font::FONT},
 };
@@ -135,7 +136,7 @@ impl AppLayout {
 
                     let node = self
                         .nodes_state
-                        .get(&node_name)
+                        .get_mut(&node_name)
                         .expect(format!("Cannot measure NodeName {}", node_name).as_str());
 
                     calculate_layout_measurement(
@@ -208,11 +209,25 @@ impl AppLayout {
                     x: offset_x + node.padding.left,
                     y: offset_y + node.padding.top,
                 };
+
+                // we basically need to make pills display: inline-block
+                let target_size = if matches!(
+                    &node_state.kind,
+                    NodeKind::Text(txt_content) if txt_content.is_pill
+                ) {
+                    Size {
+                        width: node.content_size.width + node.padding.horizontal_axis_sum(),
+                        height: node.content_size.height + node.padding.vertical_axis_sum(),
+                    }
+                } else {
+                    node.size
+                };
+
                 node_state.rect = tiny_skia::Rect::from_xywh(
                     offset_x,
                     offset_y,
-                    node.size.width,
-                    node.size.height,
+                    target_size.width,
+                    target_size.height,
                 )
                 .expect("incorrect measurements and offsets");
 
@@ -222,14 +237,12 @@ impl AppLayout {
 
             let offset = node_state.offset.clone();
             self.compute_layout_nodes(node_id, offset);
-            // self.tree.print_tree(self.root_node);
+            self.tree.print_tree(self.root_node);
         }
     }
 
     pub(crate) fn draw(&mut self, buffer: &mut [u32], window_width: u32, window_height: u32) {
         buffer.fill(self.color_to_pixel(THEME.surface));
-
-        // println!("Draw all nodes = {:?}", self.nodes_state);
 
         struct WindowSize {
             width: u32,
@@ -336,25 +349,44 @@ fn calculate_layout_measurement(
     known: Size<Option<f32>>,
     available_space: Size<AvailableSpace>,
     _node_id: NodeId,
-    node: &Node,
+    node: &mut Node,
     _node_name: &mut NodeName,
     _style: &taffy::Style,
 ) -> Size<f32> {
-    match &node.kind {
-        NodeKind::Text(content) => {
-            // println!("============");
-            // println!("Known = {:?}", known);
-            // println!("Content = {:?}", content);
-            // println!("AvailableSpace = {:?}", available_space);
-            // println!("Node = {:?}", node.style);
-
+    match &mut node.kind {
+        NodeKind::Text(txt_content) => {
             // get max available with
             let max_width = match available_space.width {
                 AvailableSpace::Definite(w) => Some(w),
                 _ => None,
             };
 
-            FONT.measure_text(&content, &node.style.font_size, max_width)
+            FONT.measure_text(&txt_content.content, &node.style.font_size, max_width)
+        }
+        NodeKind::Icon(icon) => {
+            // println!("============");
+            // println!("Known = {:?}", known);
+            // println!("AvailableSpace = {:?}", available_space);
+
+            if known.both_axis_defined() {
+                let Some(new_w) = known.width else {
+                    unreachable!()
+                };
+                let Some(new_h) = known.height else {
+                    unreachable!()
+                };
+                icon.set_size(new_w as u32, new_h as u32);
+            } else if let Some(new_w) = known.width {
+                icon.set_width(new_w as u32);
+            } else if let Some(new_h) = known.height {
+                icon.set_height(new_h as u32);
+            }
+
+            let size = icon.get_size();
+            Size {
+                width: size.width(),
+                height: size.height(),
+            }
         }
         _ => Size {
             width: known.width.unwrap_or(0.0),

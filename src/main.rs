@@ -1,18 +1,16 @@
 mod components;
+mod icons;
 mod layout;
 mod node;
 mod renderer;
 mod theme;
 
 use chrono::{DateTime, Datelike, Days, Local, NaiveDate, Weekday};
-use taffy::prelude::fit_content;
-use taffy::{FlexDirection, NodeId, Size};
-use tiny_skia::Color;
+use taffy::{FlexDirection, NodeId};
 
-use crate::components::text;
+use crate::components::{pill, text};
 use crate::node::builder::BobTheBuilder;
 use crate::theme::THEME;
-use crate::theme::font::FONT;
 use crate::{components::div, layout::AppLayout};
 
 fn build_layout(layout: &mut AppLayout) -> (NodeId, NodeId, NodeId) {
@@ -88,11 +86,13 @@ fn main() {
 
             let label = format!("calendar-cell_{}", date).to_owned();
             kid.add_child(if today.date_naive().eq(&date) {
-                text(format!("VANDAAG! {}", date.day()))
-                    .background(THEME.success)
-                    .text_color(Color::WHITE)
-                    .py(5.)
-                    .name(node::NodeName::other(label))
+                // text(format!("VANDAAG! {}", date.day()))
+                //     .background(THEME.success)
+                //     .text_color(Color::WHITE)
+                //     .py(5.)
+                //     .name(node::NodeName::other(label));
+                // icon("diamond-fill.svg").width(28.).text_color(THEME.warning)
+                pill("a pill").background(THEME.warning)
             } else {
                 text(format!("{}", date.day()))
                     .py(5.)
