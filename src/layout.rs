@@ -316,17 +316,10 @@ impl AppLayout {
                     let src_i = ((row * src_w + col) * 4) as usize;
                     let dst_i = (screen_y * window.width + screen_x) as usize;
 
-                    let r = src[src_i] as u32;
-                    let g = src[src_i + 1] as u32;
-                    let b = src[src_i + 2] as u32;
-                    let a = src[src_i + 3] as u32;
-
-                    if a == 0 {
-                        continue;
-                    }
-
-                    buffer[dst_i] = (r << 16) | (g << 8) | b;
-                    // buffer[dst_i] = (r << 24) | (g << 16) | (b << 8) | a;
+                    buffer[dst_i] = blend_pixel(
+                        [src[src_i], src[src_i + 1], src[src_i + 2], src[src_i + 3]],
+                        buffer[dst_i],
+                    );
                 }
             }
         }
@@ -393,4 +386,25 @@ fn calculate_layout_measurement(
             height: known.height.unwrap_or(0.0),
         },
     }
+}
+
+fn blend_pixel(src: [u8; 4], dst: u32) -> u32 {
+    let a = src[3] as u32;
+    if a == 0 {
+        return dst;
+    }
+
+    let src_r = src[0] as u32;
+    let src_g = src[1] as u32;
+    let src_b = src[2] as u32;
+    let dst_r = (dst >> 16) & 0xff;
+    let dst_g = (dst >> 8) & 0xff;
+    let dst_b = dst & 0xff;
+    let inv_a = 255 - a;
+
+    let out_r = src_r + (dst_r * inv_a) / 255;
+    let out_g = src_g + (dst_g * inv_a) / 255;
+    let out_b = src_b + (dst_b * inv_a) / 255;
+
+    (out_r << 16) | (out_g << 8) | out_b
 }

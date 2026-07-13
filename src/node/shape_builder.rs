@@ -86,6 +86,10 @@ impl ShapeBuilder {
         self
     }
 
+    pub fn into_builder(self) -> Builder {
+        self.builder
+    }
+
     pub fn build(self, layout: &mut AppLayout) -> taffy::NodeId {
         self.builder.build(layout)
     }

@@ -8,10 +8,10 @@ mod theme;
 use chrono::{DateTime, Datelike, Days, Local, NaiveDate, Weekday};
 use taffy::{FlexDirection, NodeId};
 
-use crate::components::{pill, text};
+use crate::components::{div, pill, text};
 use crate::node::builder::BobTheBuilder;
 use crate::theme::THEME;
-use crate::{components::div, layout::AppLayout};
+use crate::layout::AppLayout;
 
 fn build_layout(layout: &mut AppLayout) -> (NodeId, NodeId, NodeId) {
     let header = div()
