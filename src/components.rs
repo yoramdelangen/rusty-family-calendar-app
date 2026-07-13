@@ -1,4 +1,4 @@
-use taffy::Display;
+use taffy::{AlignItems, Display};
 
 use crate::{
     icons::IconInfo,
@@ -27,6 +27,13 @@ pub fn grid_item(name: &str) -> Builder {
     Builder::new(NodeKind::GridItem, None)
         .name(NodeName::GridItem(format!("{}-{}", name, next_node_id())))
         .border_b_1()
+        .px(4.)
+        .py(4.)
+        .display(Display::Flex)
+        .flex_dir_column()
+        .layout(|l| {
+            l.align_items = Some(AlignItems::Center);
+        })
 }
 
 pub fn pill(content: impl Into<String>) -> Builder {

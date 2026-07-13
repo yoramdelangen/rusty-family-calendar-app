@@ -86,13 +86,9 @@ fn main() {
 
             let label = format!("calendar-cell_{}", date).to_owned();
             kid.add_child(if today.date_naive().eq(&date) {
-                // text(format!("VANDAAG! {}", date.day()))
-                //     .background(THEME.success)
-                //     .text_color(Color::WHITE)
-                //     .py(5.)
-                //     .name(node::NodeName::other(label));
-                // icon("diamond-fill.svg").width(28.).text_color(THEME.warning)
-                pill("a pill").background(THEME.warning)
+                pill(format!("{}", date.day()))
+                    .background(THEME.warning)
+                    .name(node::NodeName::other(label))
             } else {
                 text(format!("{}", date.day()))
                     .py(5.)
