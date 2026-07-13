@@ -2,6 +2,7 @@ use taffy::{
     Display, FlexDirection, NodeId, Rect,
     prelude::{auto, length, percent},
 };
+use cosmic_text::Align;
 use tiny_skia::Color;
 
 use crate::{layout::AppLayout, node::NodeName, theme::font::FontSize};
@@ -100,6 +101,15 @@ impl Builder {
     pub fn text_color(mut self, color: Color) -> Self {
         self.style.text_color = color;
         self
+    }
+
+    pub fn text_align(mut self, align: Align) -> Self {
+        self.style.text_align = Some(align);
+        self
+    }
+
+    pub fn set_text_align(&mut self, align: Align) {
+        self.style.text_align = Some(align);
     }
 
     // --- BORDERS

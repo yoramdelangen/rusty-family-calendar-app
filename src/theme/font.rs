@@ -88,12 +88,11 @@ impl FontTheme {
             Some(node.rect.width() - padding_horizontal),
             Some(node.rect.height() - padding_vertical),
         );
-        // TODO: fix alignemtn
         buffer.set_text(
             &content,
             &attrs,
             Shaping::Advanced,
-            Some(cosmic_text::Align::Center),
+            node.style.text_align,
         );
         buffer.shape_until_scroll(&mut system, false);
 

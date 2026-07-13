@@ -1,6 +1,7 @@
 pub mod builder;
 pub mod grid_builder;
 
+use cosmic_text::Align;
 use taffy::{LengthPercentage, Rect};
 use tiny_skia::{Color, FillRule, Paint, Path, PathBuilder, Pixmap, Point, Stroke, Transform};
 
@@ -267,6 +268,7 @@ pub struct Style {
     pub background_color: Option<Color>,
     pub text_color: Color,
     pub font_size: FontSize,
+    pub text_align: Option<Align>,
     pub border_color: Option<Color>,
     pub border_radius: Rect<LengthPercentage>,
     // pub opacity: f32,
@@ -280,6 +282,7 @@ impl Default for Style {
             border_color: None,     // Color::TRANSPARENT,
             text_color: THEME.text,
             font_size: FONT.base.clone(),
+            text_align: Some(Align::Center),
             border_radius: Rect::zero(),
             // border_radius: 0.0,
             // opacity: 1.0,
