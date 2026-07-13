@@ -12,6 +12,7 @@ use calcard::{
 use chrono::{Datelike, NaiveDateTime, Utc};
 use argh::FromArgs;
 use serde::{Deserialize, Serialize};
+use rusqlite::{params, Connection};
 use uuid::Uuid;
 
 #[allow(unused)]
@@ -95,40 +96,143 @@ pub(crate) fn sync(
     let mut synced_calendars = 0usize;
     let mut synced_items = 0usize;
 
-    for profile in config
-        .profile
-        .iter()
-        .filter(|profile| profile_name.map_or(true, |wanted| profile.name == wanted))
-    {
-        for calendar_cfg in profile
-            .calendar
-            .iter()
-            .filter(|calendar| calendar_name.map_or(true, |wanted| calendar.label == wanted))
-        {
-            let remote_calendar_id = remote_calendar_id(&profile.name, &calendar_cfg.url);
-            let calendar = Calendar {
-                id: remote_calendar_id,
-                uid: remote_calendar_id.to_string(),
-                url: calendar_cfg.url.clone(),
-                label: calendar_cfg.label.clone(),
-                timezone: String::new(),
-                publish_ttl: None,
-            };
+    for (profile, calendar_cfg) in selected_calendars(&config, profile_name, calendar_name) {
+        let profile_id = remote_profile_id(&profile.name);
+        let remote_calendar_id = remote_calendar_id(&profile.name, &calendar_cfg.url);
+        let calendar = Calendar {
+            id: remote_calendar_id,
+            uid: remote_calendar_id.to_string(),
+            url: calendar_cfg.url.clone(),
+            label: calendar_cfg.label.clone(),
+            timezone: String::new(),
+            publish_ttl: None,
+        };
 
-            let items = sync_calendar(&calendar, previous_year)?;
-            synced_calendars += 1;
-            synced_items += items.len();
+        let items = sync_calendar(&calendar, previous_year)?;
+        store_sync_items(&profile_id, &calendar, &items)?;
+        synced_calendars += 1;
+        synced_items += items.len();
 
-            println!(
-                "synced profile={} calendar={} items={}",
-                profile.name,
-                calendar.label,
-                items.len()
-            );
-        }
+        println!(
+            "synced profile={} calendar={} items={}",
+            profile.name,
+            calendar.label,
+            items.len()
+        );
     }
 
     println!("done calendars={} items={}", synced_calendars, synced_items);
+    Ok(())
+}
+
+fn selected_calendars<'a>(
+    config: &'a Config,
+    profile_name: Option<&str>,
+    calendar_name: Option<&str>,
+) -> Vec<(&'a ConfigProfile, &'a ConfigCalendar)> {
+    let mut selected = Vec::new();
+
+    for profile in &config.profile {
+        if profile_name.is_some_and(|wanted| profile.name != wanted) {
+            continue;
+        }
+
+        for calendar in &profile.calendar {
+            if calendar_name.is_some_and(|wanted| calendar.label != wanted) {
+                continue;
+            }
+
+            selected.push((profile, calendar));
+        }
+    }
+
+    selected
+}
+
+fn store_sync_items(
+    profile_id: &Uuid,
+    calendar: &Calendar,
+    items: &[CalendarItem],
+) -> Result<(), Box<dyn Error>> {
+    let mut conn = Connection::open(db_path())?;
+    persist_sync_items(&mut conn, profile_id, calendar, items)?;
+    Ok(())
+}
+
+fn persist_sync_items(
+    conn: &mut Connection,
+    profile_id: &Uuid,
+    calendar: &Calendar,
+    items: &[CalendarItem],
+) -> Result<(), Box<dyn Error>> {
+    ensure_sync_schema(conn)?;
+
+    let tx = conn.transaction()?;
+    tx.execute(
+        "INSERT OR IGNORE INTO sync_calendars (calendar_id, profile_id) VALUES (?1, ?2)",
+        params![calendar.id.to_string(), profile_id.to_string()],
+    )?;
+    tx.execute(
+        "DELETE FROM sync_items WHERE calendar_id = ?1",
+        params![calendar.id.to_string()],
+    )?;
+
+    {
+        let mut stmt = tx.prepare(
+            "INSERT INTO sync_items (
+                calendar_id,
+                item_uid,
+                item_label,
+                description,
+                start_at,
+                end_at,
+                created_at,
+                last_modified
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )?;
+
+        for item in items {
+            stmt.execute(params![
+                calendar.id.to_string(),
+                item.uid.as_str(),
+                item.label.as_str(),
+                item.description.as_str(),
+                item.start_at.to_string(),
+                item.end_at.map(|value| value.to_string()),
+                item.created_at.map(|value| value.to_string()),
+                item.last_modified.map(|value| value.to_string()),
+            ])?;
+        }
+    }
+
+    tx.commit()?;
+    Ok(())
+}
+
+fn ensure_sync_schema(conn: &Connection) -> Result<(), Box<dyn Error>> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS sync_calendars (
+            calendar_id TEXT PRIMARY KEY NOT NULL,
+            profile_id TEXT NOT NULL
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS sync_items (
+            calendar_id TEXT NOT NULL,
+            item_uid TEXT NOT NULL,
+            item_label TEXT NOT NULL,
+            description TEXT NOT NULL,
+            start_at TEXT NOT NULL,
+            end_at TEXT,
+            created_at TEXT,
+            last_modified TEXT,
+            FOREIGN KEY(calendar_id) REFERENCES sync_calendars(calendar_id)
+        )",
+        [],
+    )?;
+
     Ok(())
 }
 
@@ -221,7 +325,7 @@ profile = []
 
 pub(crate) fn db_path() -> PathBuf {
     let mut path = data_dir();
-    path.push("calendar.duckdb");
+    path.push("calendar.sqlite");
     path
 }
 
@@ -402,6 +506,10 @@ fn parse_item(item: &ICalendarComponent) -> Option<CalendarItem> {
 
 fn remote_calendar_id(profile_name: &str, url: &str) -> Uuid {
     Uuid::new_v5(&Uuid::NAMESPACE_URL, format!("{profile_name}:{url}").as_bytes())
+}
+
+fn remote_profile_id(profile_name: &str) -> Uuid {
+    Uuid::new_v5(&Uuid::NAMESPACE_URL, profile_name.as_bytes())
 }
 
 // fn main() {
@@ -676,5 +784,85 @@ mod tests {
     fn validates_calendar_url_prefix() {
         assert!(is_valid_calendar_url("https://example.com/feed.ics"));
         assert!(!is_valid_calendar_url("ftp://example.com/feed.ics"));
+    }
+
+    #[test]
+    fn selects_all_calendars_by_default() {
+        let config = Config {
+            profile: vec![
+                ConfigProfile {
+                    name: "work".to_owned(),
+                    calendar: vec![ConfigCalendar {
+                        label: "primary".to_owned(),
+                        account: "a".to_owned(),
+                        cal_type: CalendarType::ICS,
+                        url: "https://a".to_owned(),
+                    }],
+                },
+                ConfigProfile {
+                    name: "home".to_owned(),
+                    calendar: vec![ConfigCalendar {
+                        label: "shared".to_owned(),
+                        account: "b".to_owned(),
+                        cal_type: CalendarType::Gmail,
+                        url: "https://b".to_owned(),
+                    }],
+                },
+            ],
+        };
+
+        let selected = selected_calendars(&config, None, None);
+
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].0.name, "work");
+        assert_eq!(selected[1].0.name, "home");
+    }
+
+    #[test]
+    fn stores_synced_items_in_sqlite() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let profile_id = Uuid::nil();
+        let calendar = Calendar {
+            id: Uuid::nil(),
+            uid: "uid-1".to_owned(),
+            url: "https://example.com/feed.ics".to_owned(),
+            label: "Work".to_owned(),
+            timezone: String::new(),
+            publish_ttl: None,
+        };
+        let items = vec![CalendarItem {
+            uid: "item-1".to_owned(),
+            label: "Standup".to_owned(),
+            description: "Daily sync".to_owned(),
+            start_at: chrono::NaiveDate::from_ymd_opt(2026, 1, 2)
+                .unwrap()
+                .and_hms_opt(9, 0, 0)
+                .unwrap(),
+            end_at: None,
+            created_at: None,
+            last_modified: None,
+        }];
+
+        persist_sync_items(&mut conn, &profile_id, &calendar, &items).unwrap();
+
+        let calendar_row: (String, String) = conn
+            .query_row(
+                "SELECT calendar_id, profile_id FROM sync_calendars",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sync_items", [], |row| row.get(0))
+            .unwrap();
+        let calendar_id: String = conn
+            .query_row("SELECT calendar_id FROM sync_items", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(calendar_row.0, calendar.id.to_string());
+        assert_eq!(calendar_row.1, profile_id.to_string());
+        assert_eq!(count, 1);
+        assert_eq!(calendar_id, calendar.id.to_string());
     }
 }
