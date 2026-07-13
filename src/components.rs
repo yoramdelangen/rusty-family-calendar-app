@@ -1,14 +1,40 @@
 use taffy::{AlignItems, Display};
+use tiny_skia::{Color, Point};
 
 use crate::{
     icons::IconInfo,
     node::{
-        NodeKind, NodeName, TextContent, builder::Builder, grid_builder::GridBuilder, next_node_id,
+        NodeKind, NodeName, TextContent, builder::Builder, grid_builder::GridBuilder,
+        next_node_id, shape_builder::ShapeBuilder,
     },
 };
 
 pub fn div() -> Builder {
     Builder::new(NodeKind::Container, None).width_full()
+}
+
+pub fn shape(color: Color) -> ShapeBuilder {
+    ShapeBuilder::new(color)
+}
+
+pub fn circle(color: Color) -> ShapeBuilder {
+    ShapeBuilder::new(color).circle()
+}
+
+pub fn oval(color: Color) -> ShapeBuilder {
+    ShapeBuilder::new(color).oval()
+}
+
+pub fn rect(color: Color) -> ShapeBuilder {
+    ShapeBuilder::new(color).rect()
+}
+
+pub fn rounded_rect(color: Color, radius: f32) -> ShapeBuilder {
+    ShapeBuilder::new(color).rounded_rect(radius)
+}
+
+pub fn polygon(color: Color, points: Vec<Point>) -> ShapeBuilder {
+    ShapeBuilder::new(color).polygon(points)
 }
 
 pub fn text(val: impl Into<String>) -> Builder {

@@ -2,6 +2,6 @@
 
 - `main.rs`: app setup and calendar screen.
 - `layout.rs`: node store + `taffy` layout.
-- `components.rs`: reusable builders.
+- `components.rs`: reusable builders, including `shape()`, `rect()`, `oval()`, `circle()`, `rounded_rect()`, and `polygon()`.
 - Edit here for app wiring or shared UI only.
 - Keep renderer, theme, and SVG logic elsewhere.

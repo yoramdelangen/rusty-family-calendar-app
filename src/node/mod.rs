@@ -1,5 +1,6 @@
 pub mod builder;
 pub mod grid_builder;
+pub mod shape_builder;
 
 use cosmic_text::Align;
 use taffy::{LengthPercentage, Rect};
@@ -33,9 +34,116 @@ impl TextContent {
 }
 
 #[derive(Clone, Debug)]
+pub enum ShapeKind {
+    Rect,
+    RoundedRect(f32),
+    Circle,
+    Oval,
+    Polygon(Vec<Point>),
+}
+
+#[derive(Clone, Debug)]
+pub struct ShapeContent {
+    pub kind: ShapeKind,
+    pub color: Color,
+}
+
+impl ShapeContent {
+    pub fn new(color: Color) -> Self {
+        Self {
+            kind: ShapeKind::Rect,
+            color,
+        }
+    }
+
+    pub fn circle(color: Color) -> Self {
+        Self {
+            kind: ShapeKind::Circle,
+            color,
+        }
+    }
+
+    pub fn oval(color: Color) -> Self {
+        Self {
+            kind: ShapeKind::Oval,
+            color,
+        }
+    }
+
+    pub fn polygon(color: Color, points: Vec<Point>) -> Self {
+        Self {
+            kind: ShapeKind::Polygon(points),
+            color,
+        }
+    }
+
+    fn draw_on_canvas(&self, canvas: &mut Pixmap, node: &Node) {
+        let color = self.color.to_color_u8();
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(
+            color.red(),
+            color.green(),
+            color.blue(),
+            color.alpha(),
+        );
+
+        match &self.kind {
+            ShapeKind::Rect => {
+                fill_rect(canvas, node.rect.width(), node.rect.height(), &paint);
+            }
+            ShapeKind::RoundedRect(radius) => {
+                let path = rounded_rect_path(0.0, 0.0, node.rect.width(), node.rect.height(), *radius);
+                canvas.fill_path(
+                    &path,
+                    &paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
+            }
+            ShapeKind::Circle => {
+                let size = node.rect.width().min(node.rect.height());
+                let radius = size / 2.0;
+                let circle = circle_path(node.rect.width() / 2.0, node.rect.height() / 2.0, radius);
+
+                canvas.fill_path(
+                    &circle,
+                    &paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
+            }
+            ShapeKind::Oval => {
+                let oval = oval_path(0.0, 0.0, node.rect.width(), node.rect.height());
+
+                canvas.fill_path(
+                    &oval,
+                    &paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
+            }
+            ShapeKind::Polygon(points) => {
+                let path = polygon_path(points);
+                canvas.fill_path(
+                    &path,
+                    &paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum NodeKind {
     Container,
     Text(TextContent),
+    Shape(ShapeContent),
     Icon(IconInfo),
     // Image(ImageNodeId),
     // Canvas(CanvasNodeId),
@@ -87,7 +195,9 @@ impl Node {
         let mut canvas = Pixmap::new(self.rect.width() as u32, self.rect.height() as u32)
             .expect("failed creating node pixmap");
 
-        if self.style.border_radius.ne(&Rect::zero()) {
+        if let NodeKind::Shape(shape) = &self.kind {
+            shape.draw_on_canvas(&mut canvas, self);
+        } else if self.style.border_radius.ne(&Rect::zero()) {
             let rounded_rect_path = self.rounded_rect(
                 0.,
                 0.,
@@ -195,6 +305,7 @@ impl Node {
             NodeKind::Text(txt_content) => {
                 FONT.draw_on_canvas(&mut canvas, &self, &txt_content.content)
             }
+            NodeKind::Shape(_) => {}
             NodeKind::Grid(_) => {}
             NodeKind::GridItem => {}
             NodeKind::Icon(i) => {
@@ -238,6 +349,79 @@ impl Node {
         pb.close();
         pb.finish().unwrap()
     }
+}
+
+fn circle_path(cx: f32, cy: f32, r: f32) -> Path {
+    let k = r * 0.552_284_8;
+
+    let mut pb = PathBuilder::new();
+    pb.move_to(cx, cy - r);
+    pb.cubic_to(cx + k, cy - r, cx + r, cy - k, cx + r, cy);
+    pb.cubic_to(cx + r, cy + k, cx + k, cy + r, cx, cy + r);
+    pb.cubic_to(cx - k, cy + r, cx - r, cy + k, cx - r, cy);
+    pb.cubic_to(cx - r, cy - k, cx - k, cy - r, cx, cy - r);
+    pb.close();
+    pb.finish().unwrap()
+}
+
+fn oval_path(x: f32, y: f32, w: f32, h: f32) -> Path {
+    let rx = w / 2.0;
+    let ry = h / 2.0;
+    let cx = x + rx;
+    let cy = y + ry;
+    let k = 0.552_284_8;
+    let kx = rx * k;
+    let ky = ry * k;
+
+    let mut pb = PathBuilder::new();
+    pb.move_to(cx, cy - ry);
+    pb.cubic_to(cx + kx, cy - ry, cx + rx, cy - ky, cx + rx, cy);
+    pb.cubic_to(cx + rx, cy + ky, cx + kx, cy + ry, cx, cy + ry);
+    pb.cubic_to(cx - kx, cy + ry, cx - rx, cy + ky, cx - rx, cy);
+    pb.cubic_to(cx - rx, cy - ky, cx - kx, cy - ry, cx, cy - ry);
+    pb.close();
+    pb.finish().unwrap()
+}
+
+fn polygon_path(points: &[Point]) -> Path {
+    let mut pb = PathBuilder::new();
+    let Some(first) = points.first() else {
+        return pb.finish().unwrap();
+    };
+
+    pb.move_to(first.x, first.y);
+    for point in &points[1..] {
+        pb.line_to(point.x, point.y);
+    }
+    pb.close();
+    pb.finish().unwrap()
+}
+
+fn fill_rect(canvas: &mut Pixmap, width: f32, height: f32, paint: &Paint) {
+    canvas.fill_rect(
+        tiny_skia::Rect::from_xywh(0.0, 0.0, width, height).expect("invalid shape rect"),
+        paint,
+        Transform::identity(),
+        None,
+    );
+}
+
+fn rounded_rect_path(x: f32, y: f32, w: f32, h: f32, radius: f32) -> Path {
+    let r = radius.max(0.0).min(w / 2.0).min(h / 2.0);
+    let mut pb = PathBuilder::new();
+
+    pb.move_to(x + r, y);
+    pb.line_to(x + w - r, y);
+    pb.quad_to(x + w, y, x + w, y + r);
+    pb.line_to(x + w, y + h - r);
+    pb.quad_to(x + w, y + h, x + w - r, y + h);
+    pb.line_to(x + r, y + h);
+    pb.quad_to(x, y + h, x, y + h - r);
+    pb.line_to(x, y + r);
+    pb.quad_to(x, y, x + r, y);
+    pb.close();
+
+    pb.finish().unwrap()
 }
 
 fn draw_border(
