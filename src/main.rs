@@ -4,6 +4,8 @@ mod icons;
 mod layout;
 mod node;
 mod renderer;
+mod profile;
+mod table;
 mod theme;
 
 use chrono::{DateTime, Datelike, Days, Local, NaiveDate, Weekday};
@@ -27,6 +29,8 @@ struct Cli {
 #[argh(subcommand)]
 enum Command {
     Sync(SyncArgs),
+    Profile(profile::ProfileArgs),
+    Calendar(calendar::CalendarArgs),
 }
 
 #[derive(FromArgs)]
@@ -87,6 +91,14 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     match cli.command {
         Some(Command::Sync(args)) => crate::calendar::sync(args.profile.as_deref(), args.calendar.as_deref())?,
+        Some(Command::Profile(args)) => match args.command {
+            Some(profile::ProfileCommand::Add(_)) => crate::profile::profile_add()?,
+            None => crate::profile::list_profiles()?,
+        },
+        Some(Command::Calendar(args)) => match args.command {
+            Some(calendar::CalendarCommand::Add(_)) => crate::calendar::calendar_add()?,
+            None => crate::calendar::list_calendars()?,
+        },
         None => launch_app(),
     }
 

@@ -1,11 +1,17 @@
-use std::{error::Error, fs, path::PathBuf};
+use std::{
+    error::Error,
+    fs,
+    io::{self, Write},
+    path::PathBuf,
+};
 
 use calcard::{
     Parser,
     icalendar::{ICalendarComponent, ICalendarComponentType, ICalendarProperty, ICalendarValue},
 };
 use chrono::{Datelike, NaiveDateTime, Utc};
-use serde::Deserialize;
+use argh::FromArgs;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[allow(unused)]
@@ -32,31 +38,50 @@ pub(crate) struct CalendarItem {
     last_modified: Option<NaiveDateTime>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(FromArgs)]
+#[argh(subcommand, name = "calendar")]
+/// Manage calendars
+pub(crate) struct CalendarArgs {
+    #[argh(subcommand)]
+    pub(crate) command: Option<CalendarCommand>,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand)]
+pub(crate) enum CalendarCommand {
+    Add(CalendarAddArgs),
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "add")]
+/// Add a calendar
+pub(crate) struct CalendarAddArgs {}
+
+#[derive(Deserialize, Serialize, Debug)]
 pub(crate) enum CalendarType {
     ICS,
     Gmail,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub(crate) struct ConfigProfile {
-    name: String,
+    pub(crate) name: String,
     #[serde(default)]
-    calendar: Vec<ConfigCalendar>,
+    pub(crate) calendar: Vec<ConfigCalendar>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub(crate) struct ConfigCalendar {
-    label: String,
-    account: String,
-    #[serde(rename(deserialize = "type"))]
-    cal_type: CalendarType,
-    url: String,
+    pub(crate) label: String,
+    pub(crate) account: String,
+    #[serde(rename = "type")]
+    pub(crate) cal_type: CalendarType,
+    pub(crate) url: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub(crate) struct Config {
-    profile: Vec<ConfigProfile>,
+    pub(crate) profile: Vec<ConfigProfile>,
 }
 
 pub(crate) fn sync(
@@ -107,10 +132,69 @@ pub(crate) fn sync(
     Ok(())
 }
 
-fn read_config() -> Result<Config, Box<dyn Error>> {
+pub(crate) fn list_calendars() -> Result<(), Box<dyn Error>> {
+    let config = read_config()?;
+
+    let rows = config
+        .profile
+        .iter()
+        .flat_map(|profile| {
+            profile.calendar.iter().map(move |calendar| {
+                vec![
+                    profile.name.clone(),
+                    calendar.label.clone(),
+                    format!("{:?}", calendar.cal_type),
+                    calendar.account.clone(),
+                ]
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if rows.is_empty() {
+        println!("no calendars configured");
+        return Ok(());
+    }
+
+    crate::table::print(&["Profile", "Label", "Type", "Account"], &rows);
+
+    Ok(())
+}
+
+pub(crate) fn calendar_add() -> Result<(), Box<dyn Error>> {
+    let mut config = read_config()?;
+    if config.profile.is_empty() {
+        return Err(other_error("add a profile first"));
+    }
+
+    let profile_index = prompt_profile_index(&config.profile)?;
+    let profile_name = config.profile[profile_index].name.clone();
+    let label = prompt_unique_calendar_label(&config.profile[profile_index])?;
+    let account = prompt_required("Account")?;
+    let cal_type = prompt_calendar_type()?;
+    let url = prompt_calendar_url()?;
+
+    config.profile[profile_index].calendar.push(ConfigCalendar {
+        label: label.clone(),
+        account,
+        cal_type,
+        url: url.clone(),
+    });
+    save_config(&config)?;
+
+    println!("added profile={profile_name} calendar={label}");
+    Ok(())
+}
+
+pub(crate) fn read_config() -> Result<Config, Box<dyn Error>> {
     ensure_config_file()?;
     let contents = fs::read_to_string(config_path())?;
     Ok(toml::from_str(&contents)?)
+}
+
+pub(crate) fn save_config(config: &Config) -> Result<(), Box<dyn Error>> {
+    ensure_config_file()?;
+    fs::write(config_path(), toml::to_string_pretty(config)?)?;
+    Ok(())
 }
 
 fn ensure_config_file() -> Result<(), Box<dyn Error>> {
@@ -142,27 +226,126 @@ pub(crate) fn db_path() -> PathBuf {
 }
 
 fn config_path() -> PathBuf {
-    let mut path = config_dir();
-    path.push("config.toml");
-    path
-}
-
-fn config_dir() -> PathBuf {
-    let mut path = home_dir();
-    path.push(".config/rusty-calendar-pi");
-    path
+    storage_dir().join("config.toml")
 }
 
 fn data_dir() -> PathBuf {
-    let mut path = home_dir();
-    path.push(".local/share/rusty-calendar-pi");
-    path
+    storage_dir()
 }
 
 fn home_dir() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn storage_dir() -> PathBuf {
+    if cfg!(debug_assertions) {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    } else {
+        let mut path = home_dir();
+        path.push(".config/rusty-calendar-pi");
+        path
+    }
+}
+
+fn prompt_profile_index(profiles: &[ConfigProfile]) -> Result<usize, Box<dyn Error>> {
+    println!("Choose a profile:");
+    for (index, profile) in profiles.iter().enumerate() {
+        println!("{}: {}", index + 1, profile.name);
+    }
+
+    loop {
+        let value = prompt_required("Profile number")?;
+        let Ok(choice) = value.parse::<usize>() else {
+            println!("enter a number");
+            continue;
+        };
+
+        if choice == 0 || choice > profiles.len() {
+            println!("pick a number from 1 to {}", profiles.len());
+            continue;
+        }
+
+        return Ok(choice - 1);
+    }
+}
+
+fn prompt_unique_calendar_label(profile: &ConfigProfile) -> Result<String, Box<dyn Error>> {
+    loop {
+        let label = prompt_required("Calendar label")?;
+        if profile.calendar.iter().any(|calendar| calendar.label == label) {
+            println!("calendar already exists in this profile");
+            continue;
+        }
+
+        return Ok(label);
+    }
+}
+
+fn prompt_required(label: &str) -> Result<String, Box<dyn Error>> {
+    loop {
+        let value = prompt(label)?;
+        if !value.is_empty() {
+            return Ok(value);
+        }
+
+        println!("value is required");
+    }
+}
+
+fn prompt_calendar_type() -> Result<CalendarType, Box<dyn Error>> {
+    println!("Calendar type:");
+    println!("1: ICS");
+    println!("2: Gmail");
+
+    loop {
+        let value = prompt_required("Choice")?;
+        if let Some(cal_type) = parse_calendar_type_choice(&value) {
+            return Ok(cal_type);
+        }
+
+        println!("pick 1 or 2");
+    }
+}
+
+fn prompt_calendar_url() -> Result<String, Box<dyn Error>> {
+    loop {
+        let value = prompt_required("Calendar URL")?;
+        if is_valid_calendar_url(&value) {
+            return Ok(value);
+        }
+
+        println!("url must start with http:// or https://");
+    }
+}
+
+fn prompt(label: &str) -> Result<String, Box<dyn Error>> {
+    print!("{}: ", label);
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input)? == 0 {
+        return Err(other_error("unexpected end of input"));
+    }
+    Ok(input.trim().to_owned())
+}
+
+fn parse_calendar_type_choice(value: &str) -> Option<CalendarType> {
+    match value.trim() {
+        "1" => Some(CalendarType::ICS),
+        "2" => Some(CalendarType::Gmail),
+        _ => None,
+    }
+}
+
+fn is_valid_calendar_url(value: &str) -> bool {
+    let value = value.trim();
+    value.starts_with("http://") || value.starts_with("https://")
+}
+
+fn other_error(message: impl Into<String>) -> Box<dyn Error> {
+    Box::new(io::Error::other(message.into()))
 }
 
 fn sync_calendar(calendar: &Calendar, previous_year: u32) -> Result<Vec<CalendarItem>, Box<dyn Error>> {
@@ -475,5 +658,23 @@ fn get_datetime_by_name(
                 None
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_calendar_type_choice() {
+        assert!(matches!(parse_calendar_type_choice("1"), Some(CalendarType::ICS)));
+        assert!(matches!(parse_calendar_type_choice("2"), Some(CalendarType::Gmail)));
+        assert!(parse_calendar_type_choice("nope").is_none());
+    }
+
+    #[test]
+    fn validates_calendar_url_prefix() {
+        assert!(is_valid_calendar_url("https://example.com/feed.ics"));
+        assert!(!is_valid_calendar_url("ftp://example.com/feed.ics"));
     }
 }
