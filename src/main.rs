@@ -1,4 +1,5 @@
 mod components;
+mod calendar;
 mod icons;
 mod layout;
 mod node;
@@ -6,12 +7,40 @@ mod renderer;
 mod theme;
 
 use chrono::{DateTime, Datelike, Days, Local, NaiveDate, Weekday};
+use argh::FromArgs;
+use std::error::Error;
 use taffy::{FlexDirection, NodeId};
 
+use crate::layout::AppLayout;
 use crate::components::{div, pill, text};
 use crate::node::builder::BobTheBuilder;
 use crate::theme::THEME;
-use crate::layout::AppLayout;
+
+#[derive(FromArgs)]
+/// Rusty Calendar Pi
+struct Cli {
+    #[argh(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand)]
+enum Command {
+    Sync(SyncArgs),
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "sync")]
+/// Sync configured calendars
+struct SyncArgs {
+    /// sync only this profile
+    #[argh(option)]
+    profile: Option<String>,
+
+    /// sync only this calendar within the selected profile
+    #[argh(option)]
+    calendar: Option<String>,
+}
 
 fn build_layout(layout: &mut AppLayout) -> (NodeId, NodeId, NodeId) {
     let header = div()
@@ -47,6 +76,24 @@ const CAL_COLS: usize = 7;
 const CAL_ROWS: usize = 4;
 
 fn main() {
+    if let Err(err) = run() {
+        eprintln!("{err}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), Box<dyn Error>> {
+    let cli: Cli = argh::from_env();
+
+    match cli.command {
+        Some(Command::Sync(args)) => crate::calendar::sync(args.profile.as_deref(), args.calendar.as_deref())?,
+        None => launch_app(),
+    }
+
+    Ok(())
+}
+
+fn launch_app() {
     let mut layout = AppLayout::new();
 
     let (_header, content, _footer) = build_layout(&mut layout);
