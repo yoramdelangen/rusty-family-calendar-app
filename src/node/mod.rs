@@ -192,7 +192,7 @@ impl Node {
             return;
         }
 
-        let mut canvas = Pixmap::new(self.rect.width() as u32, self.rect.height() as u32)
+        let mut canvas = Pixmap::new(self.rect.width().ceil() as u32, self.rect.height().ceil() as u32)
             .expect("failed creating node pixmap");
 
         if let NodeKind::Shape(shape) = &self.kind {
