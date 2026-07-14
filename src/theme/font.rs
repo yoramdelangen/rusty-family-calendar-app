@@ -65,7 +65,8 @@ impl FontTheme {
 
         let height = buffer.layout_runs().map(|run| run.line_height).sum::<f32>();
 
-        taffy::Size { width, height }
+        // ponytail: half-em slack for glyph overhang; bump if a new font needs more.
+        taffy::Size { width: width + fs.font_size * 0.5, height }
     }
 
     pub fn draw_on_canvas(&self, canvas: &mut Pixmap, node: &Node, content: &str) {
