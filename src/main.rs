@@ -1,20 +1,20 @@
-mod components;
 mod calendar;
+mod components;
 mod icons;
 mod layout;
 mod node;
-mod renderer;
 mod profile;
+mod renderer;
 mod table;
 mod theme;
 
-use chrono::{DateTime, Datelike, Days, Local, NaiveDate, Weekday};
 use argh::FromArgs;
+use chrono::{DateTime, Datelike, Days, Local, NaiveDate, Weekday};
 use std::error::Error;
 use taffy::{FlexDirection, NodeId};
 
-use crate::layout::AppLayout;
 use crate::components::{div, pill, text};
+use crate::layout::AppLayout;
 use crate::node::builder::BobTheBuilder;
 use crate::theme::THEME;
 
@@ -58,7 +58,6 @@ fn build_layout(layout: &mut AppLayout) -> (NodeId, NodeId, NodeId) {
         .name(node::NodeName::Content)
         .width_full()
         .flex_dir_column()
-        // .block()
         .layout(|l| {
             l.flex_grow = 1.0;
             l.flex_shrink = 1.0;
@@ -90,7 +89,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     let cli: Cli = argh::from_env();
 
     match cli.command {
-        Some(Command::Sync(args)) => crate::calendar::sync(args.profile.as_deref(), args.calendar.as_deref())?,
+        Some(Command::Sync(args)) => {
+            crate::calendar::sync(args.profile.as_deref(), args.calendar.as_deref())?
+        }
         Some(Command::Profile(args)) => match args.command {
             Some(profile::ProfileCommand::Add(_)) => crate::profile::profile_add()?,
             None => crate::profile::list_profiles()?,

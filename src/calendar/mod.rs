@@ -12,7 +12,7 @@ use calcard::{
 use chrono::{Datelike, NaiveDateTime, Utc};
 use argh::FromArgs;
 use serde::{Deserialize, Serialize};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
 
 #[allow(unused)]
@@ -108,8 +108,9 @@ pub(crate) fn sync(
             publish_ttl: None,
         };
 
-        let items = sync_calendar(&calendar, previous_year)?;
-        store_sync_items(&profile_id, &calendar, &items)?;
+        let last_synced_at = load_last_synced_at(calendar.id)?;
+        let items = sync_calendar(&calendar, previous_year, last_synced_at)?;
+        store_sync_items(&profile_id, &calendar, &items, Utc::now().naive_utc())?;
         synced_calendars += 1;
         synced_items += items.len();
 
@@ -153,9 +154,10 @@ fn store_sync_items(
     profile_id: &Uuid,
     calendar: &Calendar,
     items: &[CalendarItem],
+    synced_at: NaiveDateTime,
 ) -> Result<(), Box<dyn Error>> {
     let mut conn = Connection::open(db_path())?;
-    persist_sync_items(&mut conn, profile_id, calendar, items)?;
+    persist_sync_items(&mut conn, profile_id, calendar, items, synced_at)?;
     Ok(())
 }
 
@@ -164,13 +166,22 @@ fn persist_sync_items(
     profile_id: &Uuid,
     calendar: &Calendar,
     items: &[CalendarItem],
+    synced_at: NaiveDateTime,
 ) -> Result<(), Box<dyn Error>> {
     ensure_sync_schema(conn)?;
 
     let tx = conn.transaction()?;
     tx.execute(
-        "INSERT OR IGNORE INTO sync_calendars (calendar_id, profile_id) VALUES (?1, ?2)",
-        params![calendar.id.to_string(), profile_id.to_string()],
+        "INSERT INTO sync_calendars (calendar_id, profile_id, last_synced_at)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(calendar_id) DO UPDATE SET
+             profile_id = excluded.profile_id,
+             last_synced_at = excluded.last_synced_at",
+        params![
+            calendar.id.to_string(),
+            profile_id.to_string(),
+            format_naive_datetime(&synced_at),
+        ],
     )?;
     tx.execute(
         "DELETE FROM sync_items WHERE calendar_id = ?1",
@@ -197,10 +208,10 @@ fn persist_sync_items(
                 item.uid.as_str(),
                 item.label.as_str(),
                 item.description.as_str(),
-                item.start_at.to_string(),
-                item.end_at.map(|value| value.to_string()),
-                item.created_at.map(|value| value.to_string()),
-                item.last_modified.map(|value| value.to_string()),
+                format_naive_datetime(&item.start_at),
+                item.end_at.map(|value| format_naive_datetime(&value)),
+                item.created_at.map(|value| format_naive_datetime(&value)),
+                item.last_modified.map(|value| format_naive_datetime(&value)),
             ])?;
         }
     }
@@ -213,7 +224,8 @@ fn ensure_sync_schema(conn: &Connection) -> Result<(), Box<dyn Error>> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS sync_calendars (
             calendar_id TEXT PRIMARY KEY NOT NULL,
-            profile_id TEXT NOT NULL
+            profile_id TEXT NOT NULL,
+            last_synced_at TEXT
         )",
         [],
     )?;
@@ -233,7 +245,50 @@ fn ensure_sync_schema(conn: &Connection) -> Result<(), Box<dyn Error>> {
         [],
     )?;
 
+    if !has_column(conn, "sync_calendars", "last_synced_at")? {
+        conn.execute(
+            "ALTER TABLE sync_calendars ADD COLUMN last_synced_at TEXT",
+            [],
+        )?;
+    }
+
+    if !has_column(conn, "sync_items", "calendar_id")? {
+        conn.execute("ALTER TABLE sync_items ADD COLUMN calendar_id TEXT", [])?;
+    }
+
     Ok(())
+}
+
+fn load_last_synced_at(calendar_id: Uuid) -> Result<Option<NaiveDateTime>, Box<dyn Error>> {
+    let conn = Connection::open(db_path())?;
+    ensure_sync_schema(&conn)?;
+
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT last_synced_at FROM sync_calendars WHERE calendar_id = ?1",
+            params![calendar_id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    Ok(value
+        .as_deref()
+        .map(parse_naive_datetime)
+        .transpose()?)
+}
+
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, Box<dyn Error>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = stmt.query([])?;
+
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 pub(crate) fn list_calendars() -> Result<(), Box<dyn Error>> {
@@ -452,7 +507,11 @@ fn other_error(message: impl Into<String>) -> Box<dyn Error> {
     Box::new(io::Error::other(message.into()))
 }
 
-fn sync_calendar(calendar: &Calendar, previous_year: u32) -> Result<Vec<CalendarItem>, Box<dyn Error>> {
+fn sync_calendar(
+    calendar: &Calendar,
+    previous_year: u32,
+    since: Option<NaiveDateTime>,
+) -> Result<Vec<CalendarItem>, Box<dyn Error>> {
     let input = download_ical(&calendar.url);
     let mut parser = Parser::new(&input);
     let mut items = Vec::new();
@@ -474,6 +533,10 @@ fn sync_calendar(calendar: &Calendar, previous_year: u32) -> Result<Vec<Calendar
                         continue;
                     }
 
+                    if since.is_some_and(|threshold| item_sync_marker(&item) <= threshold) {
+                        continue;
+                    }
+
                     items.push(item);
                 }
             }
@@ -488,6 +551,20 @@ fn sync_calendar(calendar: &Calendar, previous_year: u32) -> Result<Vec<Calendar
     }
 
     Ok(items)
+}
+
+fn item_sync_marker(item: &CalendarItem) -> NaiveDateTime {
+    item.last_modified
+        .or(item.created_at)
+        .unwrap_or(item.start_at)
+}
+
+fn format_naive_datetime(value: &NaiveDateTime) -> String {
+    value.format("%Y-%m-%d %H:%M:%S%.f").to_string()
+}
+
+fn parse_naive_datetime(value: &str) -> Result<NaiveDateTime, chrono::ParseError> {
+    NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f")
 }
 
 fn parse_item(item: &ICalendarComponent) -> Option<CalendarItem> {
@@ -843,13 +920,26 @@ mod tests {
             last_modified: None,
         }];
 
-        persist_sync_items(&mut conn, &profile_id, &calendar, &items).unwrap();
+        let synced_at = chrono::NaiveDate::from_ymd_opt(2026, 1, 2)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+
+        persist_sync_items(&mut conn, &profile_id, &calendar, &items, synced_at).unwrap();
 
         let calendar_row: (String, String) = conn
             .query_row(
                 "SELECT calendar_id, profile_id FROM sync_calendars",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        let stored_synced_at: String = conn
+            .query_row(
+                "SELECT last_synced_at FROM sync_calendars",
+                [],
+                |row| row.get(0),
             )
             .unwrap();
 
@@ -862,6 +952,7 @@ mod tests {
 
         assert_eq!(calendar_row.0, calendar.id.to_string());
         assert_eq!(calendar_row.1, profile_id.to_string());
+        assert_eq!(stored_synced_at, format_naive_datetime(&synced_at));
         assert_eq!(count, 1);
         assert_eq!(calendar_id, calendar.id.to_string());
     }
