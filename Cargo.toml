@@ -12,6 +12,8 @@ once_cell = "1.21.4"
 resvg = "0.47.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = "1.0.228"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 taffy = { version = "0.10.1" }
 tiny-skia = "0.12.0"
 toml = "0.8"

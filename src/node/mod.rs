@@ -5,6 +5,7 @@ pub mod shape_builder;
 use cosmic_text::Align;
 use taffy::{LengthPercentage, Rect};
 use tiny_skia::{Color, FillRule, Paint, Path, PathBuilder, Pixmap, Point, Stroke, Transform};
+use tracing::debug;
 
 use crate::{
     THEME,
@@ -192,8 +193,11 @@ impl Node {
             return;
         }
 
-        let mut canvas = Pixmap::new(self.rect.width().ceil() as u32, self.rect.height().ceil() as u32)
-            .expect("failed creating node pixmap");
+        let pixmap_w = self.rect.width().ceil() as u32;
+        let pixmap_h = self.rect.height().ceil() as u32;
+        debug!(node = %self.name, pixmap_w, pixmap_h, "allocate pixmap");
+
+        let mut canvas = Pixmap::new(pixmap_w, pixmap_h).expect("failed creating node pixmap");
 
         if let NodeKind::Shape(shape) = &self.kind {
             shape.draw_on_canvas(&mut canvas, self);
@@ -309,7 +313,7 @@ impl Node {
             NodeKind::Grid(_) => {}
             NodeKind::GridItem => {}
             NodeKind::Icon(i) => {
-                println!("DRAWING ==========================+");
+                debug!(node = %self.name, "draw icon");
                 i.draw_on_canvas(&mut canvas.as_mut(), &self)
             }
         };

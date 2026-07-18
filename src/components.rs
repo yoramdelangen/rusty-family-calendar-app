@@ -7,6 +7,7 @@ use crate::{
         NodeKind, NodeName, TextContent, builder::Builder, grid_builder::GridBuilder,
         next_node_id, shape_builder::ShapeBuilder,
     },
+    theme::THEME,
 };
 
 pub fn div() -> Builder {
@@ -58,7 +59,7 @@ pub fn grid_item(name: &str) -> Builder {
         .display(Display::Flex)
         .flex_dir_column()
         .layout(|l| {
-            l.align_items = Some(AlignItems::Center);
+            l.align_items = Some(AlignItems::FlexStart);
         })
 }
 
@@ -73,6 +74,6 @@ pub fn pill(content: impl Into<String>) -> Builder {
                 txt_content.is_pill = true;
             }
         })
-        // .background(THEME.surface_raised)
+        .background(THEME.surface_raised)
         .display(Display::Flex)
 }

@@ -4,6 +4,7 @@ use cosmic_text::{Attrs, Buffer, FontSystem, Metrics, Shaping, SwashCache};
 use once_cell::sync::Lazy;
 use taffy::CoreStyle;
 use tiny_skia::{Paint, Pixmap, Transform};
+use tracing::debug;
 
 use crate::node::Node;
 
@@ -58,15 +59,24 @@ impl FontTheme {
         buffer.set_text(content, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut system, false);
 
-        let width = buffer
-            .layout_runs()
-            .map(|run| run.line_w)
-            .fold(0.0, f32::max);
+        let mut width: f32 = 0.0;
+        let mut height = 0.0;
 
-        let height = buffer.layout_runs().map(|run| run.line_height).sum::<f32>();
+        for run in buffer.layout_runs() {
+            let line_width = run.glyphs.iter().fold(None::<(f32, f32)>, |bounds, glyph| {
+                Some(match bounds {
+                    Some((min_x, max_x)) => (min_x.min(glyph.x), max_x.max(glyph.x + glyph.w)),
+                    None => (glyph.x, glyph.x + glyph.w),
+                })
+            });
 
-        // ponytail: half-em slack for glyph overhang; bump if a new font needs more.
-        taffy::Size { width: width + fs.font_size * 0.5, height }
+            width = width.max(line_width.map_or(run.line_w, |(min_x, max_x)| max_x - min_x));
+            height += run.line_height;
+        }
+
+        debug!(content, width, height, max_width = ?max_width, "measure text");
+
+        taffy::Size { width, height }
     }
 
     pub fn draw_on_canvas(&self, canvas: &mut Pixmap, node: &Node, content: &str) {
@@ -100,6 +110,17 @@ impl FontTheme {
         let mut paint = Paint::default();
         paint.anti_alias = true;
         let text_color = node.style.text_color.to_color_u8();
+
+        debug!(
+            node = %node.name,
+            width = node.rect.width(),
+            height = node.rect.height(),
+            padding_left,
+            padding_top,
+            padding_horizontal,
+            padding_vertical,
+            "draw text"
+        );
 
         buffer.draw(
             &mut system,

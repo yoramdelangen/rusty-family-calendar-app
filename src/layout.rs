@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use taffy::{FlexDirection, NodeId, TaffyTree, prelude::*};
 use tiny_skia::{Color, Path, PathBuilder, Point};
+use tracing::{debug, info_span, trace};
 
 use crate::{
     icons::read_svg,
@@ -98,6 +99,7 @@ impl AppLayout {
     }
 
     pub fn render_layout(&mut self, size: Size<Dimension>) {
+        debug!(width = ?size.width, height = ?size.height, "render layout");
         if self
             .tree
             .dirty(self.root_node)
@@ -123,6 +125,7 @@ impl AppLayout {
                 .expect("failed updating root style");
         }
 
+        let _span = info_span!("layout_pass", width = ?size.width, height = ?size.height).entered();
         self.prepare_layout_leafs(self.root_node);
 
         self.tree
@@ -162,6 +165,7 @@ impl AppLayout {
     // Prepare the layout before rendering and re-calculating the layout.
     // It walksthrough all nodes and check if something is updated.
     fn prepare_layout_leafs(&mut self, id: NodeId) {
+        trace!("prepare layout leafs");
         let children = self
             .tree
             .children(id)
@@ -186,6 +190,7 @@ impl AppLayout {
     }
 
     fn compute_layout_nodes(&mut self, id: NodeId, offset: Point) {
+        trace!(node = ?id, offset_x = offset.x, offset_y = offset.y, "compute layout nodes");
         let children = self
             .tree
             .children(id)
@@ -231,6 +236,15 @@ impl AppLayout {
                 )
                 .expect("incorrect measurements and offsets");
 
+                debug!(
+                    node = %node_name,
+                    x = offset_x,
+                    y = offset_y,
+                    width = target_size.width,
+                    height = target_size.height,
+                    "layout rect"
+                );
+
                 node_state.dirty_layout = false;
                 node_state.dirty_screen = true;
             }
@@ -242,6 +256,7 @@ impl AppLayout {
     }
 
     pub(crate) fn draw(&mut self, buffer: &mut [u32], window_width: u32, window_height: u32) {
+        debug!(window_width, window_height, buffer_len = buffer.len(), "draw frame");
         buffer.fill(self.color_to_pixel(THEME.surface));
 
         struct WindowSize {
@@ -288,6 +303,14 @@ impl AppLayout {
             }
 
             if node.dirty_screen || node.pixmap.is_none() {
+                debug!(
+                    node = %node.name,
+                    x = node.rect.x(),
+                    y = node.rect.y(),
+                    width = node.rect.width(),
+                    height = node.rect.height(),
+                    "rasterize node"
+                );
                 node.draw();
             }
 
@@ -297,6 +320,14 @@ impl AppLayout {
 
             let src_w = pixmap.width();
             let src_h = pixmap.height();
+            trace!(
+                node = %node.name,
+                x = node.rect.x(),
+                y = node.rect.y(),
+                src_w,
+                src_h,
+                "blit pixmap"
+            );
             let dst_y = node.rect.y() as u32;
             let dst_x = node.rect.x() as u32;
             let src = pixmap.data();
@@ -346,6 +377,7 @@ fn calculate_layout_measurement(
     _node_name: &mut NodeName,
     _style: &taffy::Style,
 ) -> Size<f32> {
+    trace!(node = %_node_name, "measure node");
     match &mut node.kind {
         NodeKind::Text(txt_content) => {
             // get max available with
@@ -354,7 +386,16 @@ fn calculate_layout_measurement(
                 _ => None,
             };
 
-            FONT.measure_text(&txt_content.content, &node.style.font_size, max_width)
+            let size = FONT.measure_text(&txt_content.content, &node.style.font_size, max_width);
+            debug!(
+                node = %_node_name,
+                content = %txt_content.content,
+                width = size.width,
+                height = size.height,
+                max_width = ?max_width,
+                "text measured"
+            );
+            size
         }
         NodeKind::Icon(icon) => {
             // println!("============");
@@ -376,6 +417,7 @@ fn calculate_layout_measurement(
             }
 
             let size = icon.get_size();
+            debug!(node = %_node_name, width = size.width(), height = size.height(), "icon measured");
             Size {
                 width: size.width(),
                 height: size.height(),
