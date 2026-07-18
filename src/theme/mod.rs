@@ -167,6 +167,18 @@ pub fn color_to_hex(color: Color) -> String {
     format!("#{:02X}{:02X}{:02X}", c.red(), c.green(), c.blue())
 }
 
+pub fn parse_hex_color(value: &str) -> Option<Color> {
+    let value = value.trim().trim_start_matches('#');
+    let value = value.strip_prefix("0x").unwrap_or(value);
+    let rgb = u32::from_str_radix(value, 16).ok()?;
+
+    match value.len() {
+        6 => Some(hex(rgb)),
+        8 => Some(HexColor::from_rgba(rgb).into()),
+        _ => None,
+    }
+}
+
 // pub fn hex_alpha(val: u32) -> Color {
 //     HexColor::from_rgba(val).into()
 // }

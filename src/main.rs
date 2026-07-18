@@ -10,14 +10,14 @@ mod theme;
 
 use argh::FromArgs;
 use chrono::{DateTime, Datelike, Days, Local, NaiveDate, NaiveDateTime, Weekday};
-use rusqlite::{Connection, params};
-use std::{collections::BTreeMap, error::Error};
+use rusqlite::Connection;
+use std::{collections::{BTreeMap, HashMap}, error::Error};
 use cosmic_text::Align;
 use tiny_skia::Color;
 use taffy::{AlignItems, FlexDirection, JustifyContent, NodeId};
 use tracing::{debug, info, trace};
 
-use crate::components::{div, icon, pill, text};
+use crate::components::{div, pill, text};
 use crate::layout::AppLayout;
 use crate::node::builder::BobTheBuilder;
 use crate::theme::THEME;
@@ -119,7 +119,8 @@ fn launch_app() {
     let mut layout = AppLayout::new();
 
     let (_header, content, _footer) = build_layout(&mut layout);
-    let items_by_date = seed_demo_calendar_items().expect("failed to seed demo calendar items");
+    let config = crate::calendar::read_config().expect("failed to load config");
+    let items_by_date = load_calendar_items(&config).expect("failed to load calendar items");
 
     let today = Local::now();
 
@@ -174,7 +175,7 @@ fn launch_app() {
             if let Some(items) = items_by_date.get(&date) {
                 for item in items {
                     trace!(cell = _i, date = %date, item = %item.title, "render cell item");
-                    kid.add_child(render_demo_item(item));
+                    kid.add_child(render_calendar_item(item));
                 }
             }
         })
@@ -207,189 +208,95 @@ fn get_dates(how_many: u32) -> Vec<NaiveDate> {
     dates
 }
 
-fn seed_demo_calendar_items() -> Result<BTreeMap<NaiveDate, Vec<DemoItem>>, Box<dyn Error>> {
-    debug!("seed demo calendar items");
-    let conn = Connection::open_in_memory()?;
-    conn.execute("CREATE TABLE profiles (name TEXT PRIMARY KEY NOT NULL)", [])?;
-    conn.execute(
-        "CREATE TABLE calendars (
-            profile_name TEXT NOT NULL,
-            name TEXT NOT NULL,
-            PRIMARY KEY(profile_name, name)
-        )",
-        [],
-    )?;
-    conn.execute(
-        "CREATE TABLE items (
-            profile_name TEXT NOT NULL,
-            calendar_name TEXT NOT NULL,
-            title TEXT NOT NULL,
-            start_at TEXT NOT NULL,
-            presentation TEXT NOT NULL,
-            icon_name TEXT
-        )",
-        [],
-    )?;
-
-    let week_start = get_dates(1)
-        .into_iter()
-        .next()
-        .expect("expected at least one date");
-
-    let profiles = [
-        ("Work", "Primary", "16/time.svg"),
-        ("Home", "Shared", "16/user.svg"),
-        ("Family", "Kids", "16/star.svg"),
-        ("Side", "Project", "16/launch.svg"),
-    ];
-
-    for (profile_name, calendar_name, _) in profiles {
-        conn.execute("INSERT INTO profiles (name) VALUES (?1)", params![profile_name])?;
-        conn.execute(
-            "INSERT INTO calendars (profile_name, name) VALUES (?1, ?2)",
-            params![profile_name, calendar_name],
-        )?;
-    }
-
-    let items = [
-        ("Work", "Primary", 0, 8, 0, "Standup", DemoItemPresentation::Icon, Some("20/time.svg")),
-        ("Work", "Primary", 0, 10, 30, "Planning", DemoItemPresentation::IconInPill, Some("20/checkmark.svg")),
-        ("Work", "Primary", 0, 13, 0, "Review", DemoItemPresentation::Pill, None),
-        ("Home", "Shared", 1, 9, 0, "School run", DemoItemPresentation::Icon, Some("16/user.svg")),
-        ("Home", "Shared", 1, 12, 0, "Dinner prep", DemoItemPresentation::IconInPill, Some("16/notification.svg")),
-        ("Home", "Shared", 1, 18, 0, "Quiet time", DemoItemPresentation::Pill, None),
-        ("Family", "Kids", 2, 7, 45, "Breakfast", DemoItemPresentation::Icon, Some("16/star.svg")),
-        ("Family", "Kids", 2, 11, 15, "Practice", DemoItemPresentation::IconInPill, Some("16/play.svg")),
-        ("Family", "Kids", 2, 17, 0, "Game night", DemoItemPresentation::Pill, None),
-        ("Side", "Project", 3, 11, 0, "Write", DemoItemPresentation::Icon, Some("16/launch.svg")),
-        ("Side", "Project", 3, 16, 30, "Ship", DemoItemPresentation::IconInPill, Some("16/save.svg")),
-        ("Side", "Project", 3, 19, 0, "Retro", DemoItemPresentation::Pill, None),
-    ];
-
-    for (profile_name, calendar_name, day_offset, hour, minute, title, presentation, icon_name) in items {
-        let start_at = week_start
-            .checked_add_days(Days::new(day_offset))
-            .expect("invalid day offset")
-            .and_hms_opt(hour, minute, 0)
-            .expect("invalid time");
-
-        conn.execute(
-            "INSERT INTO items (profile_name, calendar_name, title, start_at, presentation, icon_name) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                profile_name,
-                calendar_name,
-                title,
-                start_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-                presentation.as_str(),
-                icon_name,
-            ],
-        )?;
-    }
-
-    let mut stmt = conn.prepare(
-        "SELECT profile_name, calendar_name, title, start_at, presentation, icon_name
-         FROM items
-         ORDER BY start_at",
-    )?;
-    let mut rows = stmt.query([])?;
+fn load_calendar_items(config: &crate::calendar::Config) -> Result<BTreeMap<NaiveDate, Vec<CalendarItem>>, Box<dyn Error>> {
     let mut items_by_date = BTreeMap::new();
+    let db_path = crate::calendar::db_path();
+    let profile_colors: HashMap<String, Color> = config
+        .profile
+        .iter()
+        .map(|profile| {
+            let profile_id = crate::calendar::profile_id_from_name(&profile.name).to_string();
+            let color = profile.color.as_deref().and_then(theme::parse_hex_color).unwrap_or(THEME.primary);
+            (profile_id, color)
+        })
+        .collect();
+
+    if !db_path.exists() {
+        return Ok(items_by_date);
+    }
+
+    let conn = Connection::open(db_path)?;
+    let mut stmt = match conn.prepare(
+        "SELECT sync_calendars.profile_id, sync_items.item_label, sync_items.start_at
+         FROM sync_items
+         JOIN sync_calendars ON sync_calendars.calendar_id = sync_items.calendar_id
+         ORDER BY sync_items.start_at",
+    ) {
+        Ok(stmt) => stmt,
+        Err(err) => {
+            debug!(?err, "no synced calendar items yet");
+            return Ok(items_by_date);
+        }
+    };
+
+    let mut rows = stmt.query([])?;
 
     while let Some(row) = rows.next()? {
-        let profile_name: String = row.get(0)?;
-        let calendar_name: String = row.get(1)?;
-        let title: String = row.get(2)?;
-        let start_at = NaiveDateTime::parse_from_str(&row.get::<_, String>(3)?, "%Y-%m-%d %H:%M:%S")?;
-        let presentation = DemoItemPresentation::from_db(row.get::<_, String>(4)?.as_str());
-        let icon_name = row.get::<_, Option<String>>(5)?;
+        let profile_id: String = row.get(0)?;
+        let title: String = row.get(1)?;
+        let start_at = parse_calendar_datetime(&row.get::<_, String>(2)?)?;
+        let accent = profile_colors.get(&profile_id).copied().unwrap_or(THEME.primary);
 
         items_by_date
             .entry(start_at.date())
             .or_insert_with(Vec::new)
-            .push(DemoItem {
-                profile_name,
-                calendar_name,
+            .push(CalendarItem {
                 title,
                 start_at,
-                presentation,
-                icon_name,
+                accent,
             });
     }
 
     Ok(items_by_date)
 }
 
-fn render_demo_item(item: &DemoItem) -> crate::node::builder::Builder {
-    let label = item.label();
-    let time = item.start_at.format("%H:%M").to_string();
-    let accent = profile_color(&item.profile_name);
+fn render_calendar_item(item: &CalendarItem) -> crate::node::builder::Builder {
+    let accent = item.accent;
     let on_accent = readable_on(accent);
-    let icon_slot = |icon_name: Option<&str>, color: Color| match icon_name {
-        Some(name) => icon(name).width(16.).height(16.).text_color(color),
-        None => div().width(16.).height(16.),
-    };
-    let time_slot = |color: Color| {
-        text(time.clone())
-        .width(56.)
-        .text_color(color)
-        .text_align(Align::Left)
-    };
-    let label_slot = |color: Color| {
-        text(label.clone())
-            .width_auto()
-            .layout(|l| {
-                l.flex_grow = 1.0;
-                l.flex_shrink = 1.0;
-            })
-            .text_color(color)
-            .text_align(Align::Left)
-    };
-    let item_row = div().width_full().layout(|l| {
-        l.flex_direction = FlexDirection::Row;
-        l.align_items = Some(AlignItems::Center);
-        l.margin.top = taffy::prelude::length(4.);
-    });
-    let name = node::NodeName::other(format!(
-        "calendar-item_{}_{}_{}",
-        item.start_at,
-        item.profile_name,
-        item.title
-    ));
+    let time = item.start_at.format("%H:%M").to_string();
 
-    debug!(
-        start_at = %item.start_at,
-        presentation = ?item.presentation,
-        icon = ?item.icon_name,
-        "render demo item"
-    );
+    div()
+        .width_full()
+        .py(2.)
+        .px(4.)
+        .rounded_xl()
+        .background(accent)
+        .layout(|l| {
+            l.flex_direction = FlexDirection::Row;
+            l.align_items = Some(AlignItems::Center);
+            l.margin.top = taffy::prelude::length(4.);
+        })
+        .child(
+            text(time)
+                .width(56.)
+                .text_color(on_accent)
+                .text_align(Align::Left),
+        )
+        .child(
+            text(item.title.clone())
+                .width_auto()
+                .layout(|l| {
+                    l.flex_grow = 1.0;
+                    l.flex_shrink = 1.0;
+                })
+                .text_color(on_accent)
+                .text_align(Align::Left),
+        )
+}
 
-    match item.presentation {
-        DemoItemPresentation::Icon => item_row.clone()
-            .px(4.)
-            .child(icon_slot(item.icon_name.as_deref(), accent))
-            .child(time_slot(THEME.text_muted).px(4.))
-            .child(label_slot(THEME.text).px(6.))
-            .name(name),
-        DemoItemPresentation::IconInPill => item_row
-            .clone()
-            .py(2.)
-            .px(4.)
-            .rounded_xl()
-            .background(accent)
-            .child(icon_slot(item.icon_name.as_deref(), on_accent))
-            .child(time_slot(on_accent).px(4.))
-            .child(label_slot(on_accent).px(6.))
-            .name(name),
-        DemoItemPresentation::Pill => item_row
-            .clone()
-            .py(2.)
-            .px(4.)
-            .rounded_xl()
-            .background(accent)
-            .child(icon_slot(item.icon_name.as_deref(), on_accent))
-            .child(time_slot(on_accent).px(4.))
-            .child(label_slot(on_accent).px(6.))
-            .name(name),
-    }
+fn parse_calendar_datetime(value: &str) -> Result<NaiveDateTime, chrono::ParseError> {
+    NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f")
+        .or_else(|_| NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S"))
 }
 
 fn readable_on(color: Color) -> Color {
@@ -403,54 +310,11 @@ fn readable_on(color: Color) -> Color {
     }
 }
 
-fn profile_color(profile_name: &str) -> Color {
-    match profile_name {
-        "Work" => THEME.primary,
-        "Home" => THEME.success,
-        "Family" => THEME.warning,
-        _ => THEME.danger,
-    }
-}
-
 #[derive(Clone, Debug)]
-struct DemoItem {
-    profile_name: String,
-    calendar_name: String,
+struct CalendarItem {
     title: String,
     start_at: NaiveDateTime,
-    presentation: DemoItemPresentation,
-    icon_name: Option<String>,
-}
-
-impl DemoItem {
-    fn label(&self) -> String {
-        self.title.clone()
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-enum DemoItemPresentation {
-    Icon,
-    IconInPill,
-    Pill,
-}
-
-impl DemoItemPresentation {
-    fn from_db(value: &str) -> Self {
-        match value {
-            "icon" => Self::Icon,
-            "icon-pill" => Self::IconInPill,
-            _ => Self::Pill,
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Icon => "icon",
-            Self::IconInPill => "icon-pill",
-            Self::Pill => "pill",
-        }
-    }
+    accent: Color,
 }
 
 #[cfg(test)]
@@ -458,14 +322,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn seeds_demo_items_in_time_order() {
-        let items_by_date = seed_demo_calendar_items().unwrap();
-        let monday = items_by_date.values().next().unwrap();
-
-        assert_eq!(items_by_date.len(), 4);
-        assert_eq!(monday.len(), 3);
-        assert!(matches!(monday[0].presentation, DemoItemPresentation::Icon));
-        assert!(matches!(monday[1].presentation, DemoItemPresentation::IconInPill));
-        assert!(matches!(monday[2].presentation, DemoItemPresentation::Pill));
+    fn parses_profile_color() {
+        assert_eq!(theme::parse_hex_color("#1e66f5"), Some(THEME.primary));
     }
 }

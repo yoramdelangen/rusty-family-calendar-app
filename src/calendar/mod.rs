@@ -68,6 +68,8 @@ pub(crate) enum CalendarType {
 pub(crate) struct ConfigProfile {
     pub(crate) name: String,
     #[serde(default)]
+    pub(crate) color: Option<String>,
+    #[serde(default)]
     pub(crate) calendar: Vec<ConfigCalendar>,
 }
 
@@ -347,13 +349,31 @@ pub(crate) fn calendar_add() -> Result<(), Box<dyn Error>> {
 pub(crate) fn read_config() -> Result<Config, Box<dyn Error>> {
     ensure_config_file()?;
     let contents = fs::read_to_string(config_path())?;
-    Ok(toml::from_str(&contents)?)
+    let mut config: Config = toml::from_str(&contents)?;
+    if ensure_profile_colors(&mut config) {
+        save_config(&config)?;
+    }
+
+    Ok(config)
 }
 
 pub(crate) fn save_config(config: &Config) -> Result<(), Box<dyn Error>> {
     ensure_config_file()?;
     fs::write(config_path(), toml::to_string_pretty(config)?)?;
     Ok(())
+}
+
+pub(crate) fn profile_color_for_index(index: usize) -> String {
+    match index % 4 {
+        0 => "#1e66f5".to_owned(),
+        1 => "#40a02b".to_owned(),
+        2 => "#fe640b".to_owned(),
+        _ => "#d20f39".to_owned(),
+    }
+}
+
+pub(crate) fn profile_id_from_name(profile_name: &str) -> Uuid {
+    remote_profile_id(profile_name)
 }
 
 fn ensure_config_file() -> Result<(), Box<dyn Error>> {
@@ -369,6 +389,19 @@ fn ensure_config_file() -> Result<(), Box<dyn Error>> {
     fs::write(path, DEFAULT_CONFIG)?;
     println!("created config.toml");
     Ok(())
+}
+
+fn ensure_profile_colors(config: &mut Config) -> bool {
+    let mut changed = false;
+
+    for (index, profile) in config.profile.iter_mut().enumerate() {
+        if profile.color.is_none() {
+            profile.color = Some(profile_color_for_index(index));
+            changed = true;
+        }
+    }
+
+    changed
 }
 
 const DEFAULT_CONFIG: &str = r#"# Rusty Calendar Pi
@@ -955,5 +988,11 @@ mod tests {
         assert_eq!(stored_synced_at, format_naive_datetime(&synced_at));
         assert_eq!(count, 1);
         assert_eq!(calendar_id, calendar.id.to_string());
+    }
+
+    #[test]
+    fn profiles_get_stable_palette_colors() {
+        assert_eq!(profile_color_for_index(0), "#1e66f5");
+        assert_eq!(profile_color_for_index(1), "#40a02b");
     }
 }

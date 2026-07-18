@@ -41,11 +41,12 @@ pub(crate) fn list_profiles() -> Result<(), Box<dyn Error>> {
         .map(|(index, profile)| vec![
             (index + 1).to_string(),
             profile.name.clone(),
+            profile.color.clone().unwrap_or_default(),
             profile.calendar.len().to_string(),
         ])
         .collect::<Vec<_>>();
 
-    crate::table::print(&["#", "Name", "Calendars"], &rows);
+    crate::table::print(&["#", "Name", "Color", "Calendars"], &rows);
 
     Ok(())
 }
@@ -53,9 +54,11 @@ pub(crate) fn list_profiles() -> Result<(), Box<dyn Error>> {
 pub(crate) fn profile_add() -> Result<(), Box<dyn Error>> {
     let mut config = calendar::read_config()?;
     let name = prompt_unique_profile_name(&config)?;
+    let color = calendar::profile_color_for_index(config.profile.len());
 
     config.profile.push(ConfigProfile {
         name: name.clone(),
+        color: Some(color),
         calendar: Vec::new(),
     });
     calendar::save_config(&config)?;
