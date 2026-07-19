@@ -1,4 +1,4 @@
-use taffy::{AlignItems, Display};
+use taffy::{prelude::{length, percent}, AlignItems, Display};
 use tiny_skia::{Color, Point};
 
 use crate::{
@@ -59,6 +59,8 @@ pub fn grid_item(name: &str) -> Builder {
         .display(Display::Flex)
         .flex_dir_column()
         .layout(|l| {
+            l.max_size.width = percent(1.);
+            l.min_size.width = length(0.);
             l.align_items = Some(AlignItems::FlexStart);
         })
 }
