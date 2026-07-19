@@ -502,6 +502,7 @@ pub enum NodeName {
     Footer,
     Content,
     Icon(String),
+    Pill(String),
     Grid(String),
     GridItem(String),
     Other(String),
@@ -526,6 +527,18 @@ impl NodeName {
             next_node_id()
         ))
     }
+
+    pub fn pill(name: Option<impl Into<String>>) -> Self {
+        NodeName::Icon(format!(
+            "{}_{}",
+            if let Some(n) = name {
+                n.into()
+            } else {
+                "pill".to_string()
+            },
+            next_node_id()
+        ))
+    }
 }
 
 impl std::fmt::Display for NodeName {
@@ -536,6 +549,7 @@ impl std::fmt::Display for NodeName {
             NodeName::Footer => f.write_str("FOOTER"),
             NodeName::Content => f.write_str("CONTENT"),
             NodeName::Icon(id) => write!(f, "ICON[{id}]"),
+            NodeName::Pill(id) => write!(f, "PILL[{id}]"),
             NodeName::Grid(id) => write!(f, "GRID[{id}]"),
             NodeName::Other(id) => write!(f, "OTHER[{id}]"),
             NodeName::NoName(id) => write!(f, "NAMELESS[{id}]"),

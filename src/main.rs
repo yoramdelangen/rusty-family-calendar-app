@@ -16,7 +16,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     error::Error,
 };
-use taffy::{AlignItems, FlexDirection, JustifyContent, NodeId, prelude::length};
+use taffy::{prelude::length, AlignItems, FlexDirection, JustifyContent, NodeId};
 use tiny_skia::Color;
 use tracing::{debug, info, trace};
 
@@ -316,14 +316,15 @@ fn render_calendar_item(item: &CalendarItem) -> crate::node::builder::Builder {
 
     div()
         .width_full()
-        .py(2.)
+        .pt(2.)
+        .pb(6.)
         .px(4.)
         .rounded_xl()
         .background(accent)
         .layout(|l| {
             l.flex_direction = FlexDirection::Row;
             l.align_items = Some(AlignItems::Center);
-            l.margin.top = taffy::prelude::length(4.);
+            l.margin.top = length(4.);
         })
         .child(
             text(time)

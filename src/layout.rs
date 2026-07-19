@@ -251,7 +251,7 @@ impl AppLayout {
 
             let offset = node_state.offset.clone();
             self.compute_layout_nodes(node_id, offset);
-            self.tree.print_tree(self.root_node);
+            // self.tree.print_tree(self.root_node);
         }
     }
 

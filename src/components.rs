@@ -71,9 +71,11 @@ pub fn grid_item(name: &str) -> Builder {
 pub fn pill(content: impl Into<String>) -> Builder {
     text(content)
         .width_auto()
-        .py(2.)
+        .pt(2.)
+        .pb(4.)
         .px(4.)
         .rounded_xl()
+        .name(NodeName::pill(None::<String>))
         .kind_meta(|kind| {
             if let NodeKind::Text(txt_content) = kind {
                 txt_content.is_pill = true;

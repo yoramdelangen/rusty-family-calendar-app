@@ -183,6 +183,14 @@ impl Builder {
         self.style.layout.padding.bottom = length(size);
         self
     }
+    pub fn pt(mut self, size: f32) -> Self {
+        self.style.layout.padding.top = length(size);
+        self
+    }
+    pub fn pb(mut self, size: f32) -> Self {
+        self.style.layout.padding.bottom = length(size);
+        self
+    }
 
     // --- CHILDREN HELPERS
     pub fn child(mut self, child: Builder) -> Self {
