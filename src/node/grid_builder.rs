@@ -117,6 +117,11 @@ impl GridBuilder {
         }
         self
     }
+
+    pub fn layout(mut self, f: impl FnOnce(&mut taffy::Style)) -> Self {
+        f(&mut self.builder.style.layout);
+        self
+    }
 }
 
 impl BobTheBuilder for GridBuilder {

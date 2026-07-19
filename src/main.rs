@@ -10,17 +10,23 @@ mod theme;
 
 use argh::FromArgs;
 use chrono::{DateTime, Datelike, Days, Local, NaiveDate, NaiveDateTime, Weekday};
-use rusqlite::Connection;
-use std::{collections::{BTreeMap, HashMap}, error::Error};
 use cosmic_text::Align;
+use rusqlite::Connection;
+use std::{
+    collections::{BTreeMap, HashMap},
+    error::Error,
+};
+use taffy::{AlignItems, FlexDirection, JustifyContent, NodeId, prelude::length};
 use tiny_skia::Color;
-use taffy::{AlignItems, FlexDirection, JustifyContent, NodeId};
 use tracing::{debug, info, trace};
 
-use crate::components::{div, pill, text};
 use crate::layout::AppLayout;
 use crate::node::builder::BobTheBuilder;
 use crate::theme::THEME;
+use crate::{
+    components::{div, grid, pill, text},
+    node::builder::Builder,
+};
 
 #[derive(FromArgs)]
 /// Rusty Calendar Pi
@@ -125,11 +131,14 @@ fn launch_app() {
     let today = Local::now();
 
     let headers = get_weekdays();
-    components::grid("calendar_weekday", 7, None)
+    grid("calendar_weekday", CAL_COLS + 1, None)
         .height_auto()
         .flex_no_grow()
         .border_color(THEME.border)
         .border_b(1.)
+        .layout(|l| {
+            l.grid_template_columns[0] = length(33.);
+        })
         .children(
             headers
                 .iter()
@@ -139,22 +148,38 @@ fn launch_app() {
         .parent_node(content)
         .build(&mut layout);
 
+    let mut weeknumbers: Vec<Builder> = get_weeknumbers(CAL_ROWS)
+        .iter()
+        .map(|num| text(num.to_string()))
+        .collect();
+
+    println!("{:?}", weeknumbers.len());
+
     let mut dates = get_dates((CAL_COLS * CAL_ROWS) as u32).into_iter();
-    components::grid("calendar", 7, Some(4))
+    grid("calendar", CAL_COLS + 1, Some(CAL_ROWS))
         .border_color(THEME.border)
         .height_full()
         .parent_node(content)
-        .foreach_children(|kid, _i| {
-            trace!(cell = _i, "fill calendar cell");
+        .layout(|l| {
+            l.grid_template_columns[0] = length(33.);
+        })
+        .foreach_children(|kid, i| {
+            trace!(cell = i, "fill calendar cell");
             kid.set_layout(|l| {
                 l.flex_direction = FlexDirection::Column;
             });
 
+            // when first col of the row
+            if i % (CAL_COLS + 1) == 0 {
+                kid.add_child(weeknumbers.pop().expect("Dont have any weeks left"));
+                return;
+            }
+
             let date = dates.next().expect("Cannot pop a date");
 
-            if today.date_naive().eq(&date) {
-                println!("TODAY IS THE DAY {}", date);
-            }
+            // if today.date_naive().eq(&date) {
+            //     println!("TODAY IS THE DAY {}", date);
+            // }
 
             let label = format!("calendar-cell_{}", date).to_owned();
             kid.add_child(
@@ -174,7 +199,7 @@ fn launch_app() {
 
             if let Some(items) = items_by_date.get(&date) {
                 for item in items {
-                    trace!(cell = _i, date = %date, item = %item.title, "render cell item");
+                    trace!(cell = i, date = %date, item = %item.title, "render cell item");
                     kid.add_child(render_calendar_item(item));
                 }
             }
@@ -187,10 +212,25 @@ fn launch_app() {
 }
 
 fn get_weekdays() -> Vec<String> {
-    vec!["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"]
+    vec!["", "Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"]
         .iter_mut()
         .map(|v| v.to_owned())
         .collect()
+}
+
+/// Get week numbers for a num amount of weeks and return them in a vec.
+fn get_weeknumbers(num_of_weeks: usize) -> Vec<u32> {
+    let local = Local::now().naive_local();
+
+    let mut weeks = Vec::with_capacity(num_of_weeks);
+    weeks.push(local.iso_week().week());
+    for i in 1..num_of_weeks {
+        if let Some(d) = local.checked_add_days(Days::new((i * 7) as u64)) {
+            weeks.push(d.iso_week().week());
+        }
+    }
+
+    weeks
 }
 
 fn get_dates(how_many: u32) -> Vec<NaiveDate> {
@@ -208,7 +248,9 @@ fn get_dates(how_many: u32) -> Vec<NaiveDate> {
     dates
 }
 
-fn load_calendar_items(config: &crate::calendar::Config) -> Result<BTreeMap<NaiveDate, Vec<CalendarItem>>, Box<dyn Error>> {
+fn load_calendar_items(
+    config: &crate::calendar::Config,
+) -> Result<BTreeMap<NaiveDate, Vec<CalendarItem>>, Box<dyn Error>> {
     let mut items_by_date = BTreeMap::new();
     let db_path = crate::calendar::db_path();
     let profile_colors: HashMap<String, Color> = config
@@ -216,7 +258,11 @@ fn load_calendar_items(config: &crate::calendar::Config) -> Result<BTreeMap<Naiv
         .iter()
         .map(|profile| {
             let profile_id = crate::calendar::profile_id_from_name(&profile.name).to_string();
-            let color = profile.color.as_deref().and_then(theme::parse_hex_color).unwrap_or(THEME.primary);
+            let color = profile
+                .color
+                .as_deref()
+                .and_then(theme::parse_hex_color)
+                .unwrap_or(THEME.primary);
             (profile_id, color)
         })
         .collect();
@@ -245,7 +291,10 @@ fn load_calendar_items(config: &crate::calendar::Config) -> Result<BTreeMap<Naiv
         let profile_id: String = row.get(0)?;
         let title: String = row.get(1)?;
         let start_at = parse_calendar_datetime(&row.get::<_, String>(2)?)?;
-        let accent = profile_colors.get(&profile_id).copied().unwrap_or(THEME.primary);
+        let accent = profile_colors
+            .get(&profile_id)
+            .copied()
+            .unwrap_or(THEME.primary);
 
         items_by_date
             .entry(start_at.date())
@@ -301,7 +350,8 @@ fn parse_calendar_datetime(value: &str) -> Result<NaiveDateTime, chrono::ParseEr
 
 fn readable_on(color: Color) -> Color {
     let c = color.to_color_u8();
-    let luminance = u32::from(c.red()) * 299 + u32::from(c.green()) * 587 + u32::from(c.blue()) * 114;
+    let luminance =
+        u32::from(c.red()) * 299 + u32::from(c.green()) * 587 + u32::from(c.blue()) * 114;
 
     if luminance < 128_000 {
         Color::from_rgba8(255, 255, 255, 255)
