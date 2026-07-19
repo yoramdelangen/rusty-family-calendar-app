@@ -16,7 +16,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     error::Error,
 };
-use taffy::{prelude::length, AlignItems, FlexDirection, JustifyContent, NodeId};
+use taffy::{AlignItems, FlexDirection, JustifyContent, NodeId, prelude::length};
 use tiny_skia::Color;
 use tracing::{debug, info, trace};
 
@@ -253,17 +253,26 @@ fn load_calendar_items(
 ) -> Result<BTreeMap<NaiveDate, Vec<CalendarItem>>, Box<dyn Error>> {
     let mut items_by_date = BTreeMap::new();
     let db_path = crate::calendar::db_path();
-    let profile_colors: HashMap<String, Color> = config
+    let calendar_colors: HashMap<String, Color> = config
         .profile
         .iter()
-        .map(|profile| {
-            let profile_id = crate::calendar::profile_id_from_name(&profile.name).to_string();
-            let color = profile
+        .flat_map(|profile| {
+            let profile_color = profile
                 .color
                 .as_deref()
                 .and_then(theme::parse_hex_color)
                 .unwrap_or(THEME.primary);
-            (profile_id, color)
+            profile.calendar.iter().map(move |calendar| {
+                let color = calendar
+                    .color
+                    .as_deref()
+                    .and_then(theme::parse_hex_color)
+                    .unwrap_or(profile_color);
+                (
+                    crate::calendar::calendar_id_from(&profile.name, &calendar.url).to_string(),
+                    color,
+                )
+            })
         })
         .collect();
 
@@ -273,10 +282,10 @@ fn load_calendar_items(
 
     let conn = Connection::open(db_path)?;
     let mut stmt = match conn.prepare(
-        "SELECT sync_calendars.profile_id, sync_items.item_label, sync_items.start_at
-         FROM sync_items
-         JOIN sync_calendars ON sync_calendars.calendar_id = sync_items.calendar_id
-         ORDER BY sync_items.start_at",
+        "SELECT sync_items.calendar_id, sync_items.item_label, sync_items.start_at
+          FROM sync_items
+          JOIN sync_calendars ON sync_calendars.calendar_id = sync_items.calendar_id
+          ORDER BY sync_items.start_at",
     ) {
         Ok(stmt) => stmt,
         Err(err) => {
@@ -288,11 +297,11 @@ fn load_calendar_items(
     let mut rows = stmt.query([])?;
 
     while let Some(row) = rows.next()? {
-        let profile_id: String = row.get(0)?;
+        let calendar_id: String = row.get(0)?;
         let title: String = row.get(1)?;
         let start_at = parse_calendar_datetime(&row.get::<_, String>(2)?)?;
-        let accent = profile_colors
-            .get(&profile_id)
+        let accent = calendar_colors
+            .get(&calendar_id)
             .copied()
             .unwrap_or(THEME.primary);
 
@@ -313,6 +322,8 @@ fn render_calendar_item(item: &CalendarItem) -> crate::node::builder::Builder {
     let accent = item.accent;
     let on_accent = readable_on(accent);
     let time = item.start_at.format("%H:%M").to_string();
+
+    println!("Item {:?}", item);
 
     div()
         .width_full()

@@ -80,6 +80,8 @@ pub(crate) struct ConfigCalendar {
     #[serde(rename = "type")]
     pub(crate) cal_type: CalendarType,
     pub(crate) url: String,
+    #[serde(default)]
+    pub(crate) color: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -337,6 +339,7 @@ pub(crate) fn calendar_add() -> Result<(), Box<dyn Error>> {
         account,
         cal_type,
         url: url.clone(),
+        color: None,
     });
     save_config(&config)?;
 
@@ -372,6 +375,10 @@ pub(crate) fn profile_color_for_index(index: usize) -> String {
 
 pub(crate) fn profile_id_from_name(profile_name: &str) -> Uuid {
     remote_profile_id(profile_name)
+}
+
+pub(crate) fn calendar_id_from(profile_name: &str, url: &str) -> Uuid {
+    remote_calendar_id(profile_name, url)
 }
 
 fn ensure_config_file() -> Result<(), Box<dyn Error>> {
@@ -918,6 +925,7 @@ mod tests {
                         account: "a".to_owned(),
                         cal_type: CalendarType::ICS,
                         url: "https://a".to_owned(),
+                        color: None,
                     }],
                 },
                 ConfigProfile {
@@ -927,6 +935,7 @@ mod tests {
                         account: "b".to_owned(),
                         cal_type: CalendarType::Gmail,
                         url: "https://b".to_owned(),
+                        color: None,
                     }],
                 },
             ],
