@@ -2,7 +2,10 @@ use tiny_skia::Color;
 
 use crate::{layout::AppLayout, node::NodeName};
 
-use super::{NodeKind, ShapeContent, ShapeKind, builder::{BobTheBuilder, Builder}};
+use super::{
+    NodeKind, ShapeContent, ShapeKind,
+    builder::{BobTheBuilder, Builder},
+};
 
 #[derive(Debug)]
 pub struct ShapeBuilder {

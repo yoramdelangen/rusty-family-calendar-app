@@ -1,6 +1,8 @@
 use std::sync::Mutex;
 
-use cosmic_text::{Attrs, Buffer, FontSystem, Metrics, Shaping, SwashCache};
+use cosmic_text::{
+    Attrs, Buffer, Ellipsize, EllipsizeHeightLimit, FontSystem, Metrics, Shaping, SwashCache, Wrap,
+};
 use once_cell::sync::Lazy;
 use taffy::CoreStyle;
 use tiny_skia::{Paint, Pixmap, Transform};
@@ -48,12 +50,18 @@ impl FontTheme {
         content: &str,
         fs: &FontSize,
         max_width: Option<f32>,
+        ellipsis: bool,
     ) -> taffy::Size<f32> {
         let attrs = Attrs::new();
         let metrics = Metrics::new(fs.font_size, fs.line_height);
         let mut system = self.system.lock().unwrap();
 
         let mut buffer = Buffer::new(&mut system, metrics);
+
+        if ellipsis {
+            buffer.set_wrap(Wrap::None);
+            buffer.set_ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)));
+        }
 
         buffer.set_size(max_width, None);
         buffer.set_text(content, &attrs, Shaping::Advanced, None);
@@ -91,20 +99,30 @@ impl FontTheme {
         let padding_left = padding.left.into_raw().value();
         let padding_horizontal = padding_left + padding.right.into_raw().value();
         let padding_vertical = padding_top + padding.bottom.into_raw().value();
+        let available_width = (node.rect.width() - padding_horizontal).max(0.0);
 
         let mut system = self.system.lock().unwrap();
         let mut cache = self.cache.lock().unwrap();
         let mut buffer = Buffer::new(&mut system, metrics);
+        let ellipsis = matches!(
+            &node.kind,
+            crate::node::NodeKind::Text(txt_content) if txt_content.ellipsis
+        );
+
+        if ellipsis {
+            buffer.set_wrap(Wrap::None);
+            buffer.set_ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)));
+        }
+
         buffer.set_size(
-            Some(node.rect.width() - padding_horizontal),
-            Some(node.rect.height() - padding_vertical),
+            Some(available_width),
+            Some(if ellipsis {
+                node.style.font_size.line_height
+            } else {
+                node.rect.height() - padding_vertical
+            }),
         );
-        buffer.set_text(
-            &content,
-            &attrs,
-            Shaping::Advanced,
-            node.style.text_align,
-        );
+        buffer.set_text(content, &attrs, Shaping::Advanced, node.style.text_align);
         buffer.shape_until_scroll(&mut system, false);
 
         let mut paint = Paint::default();

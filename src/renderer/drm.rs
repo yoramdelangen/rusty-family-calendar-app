@@ -1,9 +1,4 @@
-use std::{
-    fs::OpenOptions,
-    path::Path,
-    thread,
-    time::Duration,
-};
+use std::{fs::OpenOptions, path::Path, thread, time::Duration};
 
 use drm::{
     Device,
@@ -48,11 +43,7 @@ impl DrmWindowRenderer {
 
         println!(
             "DRM target: connector={} encoder={:?} crtc={:?} mode={}x{}",
-            connector,
-            encoder,
-            crtc,
-            width,
-            height
+            connector, encoder, crtc, width, height
         );
 
         layout.render_layout(Size {

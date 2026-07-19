@@ -24,12 +24,14 @@ pub fn next_node_id() -> u64 {
 pub struct TextContent {
     pub content: String,
     pub is_pill: bool,
+    pub ellipsis: bool,
 }
 impl TextContent {
     pub fn new(content: impl Into<String>) -> Self {
         Self {
             content: content.into(),
             is_pill: false,
+            ellipsis: false,
         }
     }
 }
@@ -81,19 +83,15 @@ impl ShapeContent {
     fn draw_on_canvas(&self, canvas: &mut Pixmap, node: &Node) {
         let color = self.color.to_color_u8();
         let mut paint = Paint::default();
-        paint.set_color_rgba8(
-            color.red(),
-            color.green(),
-            color.blue(),
-            color.alpha(),
-        );
+        paint.set_color_rgba8(color.red(), color.green(), color.blue(), color.alpha());
 
         match &self.kind {
             ShapeKind::Rect => {
                 fill_rect(canvas, node.rect.width(), node.rect.height(), &paint);
             }
             ShapeKind::RoundedRect(radius) => {
-                let path = rounded_rect_path(0.0, 0.0, node.rect.width(), node.rect.height(), *radius);
+                let path =
+                    rounded_rect_path(0.0, 0.0, node.rect.width(), node.rect.height(), *radius);
                 canvas.fill_path(
                     &path,
                     &paint,

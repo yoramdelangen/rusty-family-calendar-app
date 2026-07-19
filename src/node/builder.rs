@@ -1,8 +1,8 @@
+use cosmic_text::Align;
 use taffy::{
     Display, FlexDirection, NodeId, Rect,
     prelude::{auto, length, percent},
 };
-use cosmic_text::Align;
 use tiny_skia::Color;
 
 use crate::{layout::AppLayout, node::NodeName, theme::font::FontSize};
@@ -220,6 +220,13 @@ impl Builder {
 
     pub fn kind_meta(mut self, f: impl FnOnce(&mut NodeKind)) -> Self {
         f(&mut self.kind);
+        self
+    }
+
+    pub fn ellipsis(mut self) -> Self {
+        if let NodeKind::Text(txt_content) = &mut self.kind {
+            txt_content.ellipsis = true;
+        }
         self
     }
     // pub fn set_kind_meta(&mut self, f: impl FnOnce(&mut NodeKind)) {

@@ -38,12 +38,14 @@ pub(crate) fn list_profiles() -> Result<(), Box<dyn Error>> {
         .profile
         .iter()
         .enumerate()
-        .map(|(index, profile)| vec![
-            (index + 1).to_string(),
-            profile.name.clone(),
-            profile.color.clone().unwrap_or_default(),
-            profile.calendar.len().to_string(),
-        ])
+        .map(|(index, profile)| {
+            vec![
+                (index + 1).to_string(),
+                profile.name.clone(),
+                profile.color.clone().unwrap_or_default(),
+                profile.calendar.len().to_string(),
+            ]
+        })
         .collect::<Vec<_>>();
 
     crate::table::print(&["#", "Name", "Color", "Calendars"], &rows);

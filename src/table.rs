@@ -2,7 +2,14 @@ pub(crate) fn print(headers: &[&str], rows: &[Vec<String>]) {
     let widths = column_widths(headers, rows);
 
     print_border(&widths);
-    print_row(headers.iter().map(|value| value.to_string()).collect::<Vec<_>>().as_slice(), &widths);
+    print_row(
+        headers
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .as_slice(),
+        &widths,
+    );
     print_border(&widths);
 
     for row in rows {
@@ -13,7 +20,10 @@ pub(crate) fn print(headers: &[&str], rows: &[Vec<String>]) {
 }
 
 fn column_widths(headers: &[&str], rows: &[Vec<String>]) -> Vec<usize> {
-    let mut widths = headers.iter().map(|header| header.len()).collect::<Vec<_>>();
+    let mut widths = headers
+        .iter()
+        .map(|header| header.len())
+        .collect::<Vec<_>>();
 
     for row in rows {
         for (index, value) in row.iter().enumerate() {

@@ -333,11 +333,12 @@ fn render_calendar_item(item: &CalendarItem) -> crate::node::builder::Builder {
         )
         .child(
             text(item.title.clone())
-                .width_auto()
+                .width(0.)
                 .layout(|l| {
                     l.flex_grow = 1.0;
                     l.flex_shrink = 1.0;
                 })
+                .ellipsis()
                 .text_color(on_accent)
                 .text_align(Align::Left),
         )

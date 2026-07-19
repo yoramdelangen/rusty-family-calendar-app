@@ -1,11 +1,14 @@
-use taffy::{prelude::{length, percent}, AlignItems, Display};
+use taffy::{
+    AlignItems, Display,
+    prelude::{length, percent},
+};
 use tiny_skia::{Color, Point};
 
 use crate::{
     icons::IconInfo,
     node::{
-        NodeKind, NodeName, TextContent, builder::Builder, grid_builder::GridBuilder,
-        next_node_id, shape_builder::ShapeBuilder,
+        NodeKind, NodeName, TextContent, builder::Builder, grid_builder::GridBuilder, next_node_id,
+        shape_builder::ShapeBuilder,
     },
     theme::THEME,
 };
@@ -77,5 +80,4 @@ pub fn pill(content: impl Into<String>) -> Builder {
             }
         })
         .background(THEME.surface_raised)
-        .display(Display::Flex)
 }

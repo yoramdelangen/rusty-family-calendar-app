@@ -5,14 +5,14 @@ use std::{
     path::PathBuf,
 };
 
+use argh::FromArgs;
 use calcard::{
     Parser,
     icalendar::{ICalendarComponent, ICalendarComponentType, ICalendarProperty, ICalendarValue},
 };
 use chrono::{Datelike, NaiveDateTime, Utc};
-use argh::FromArgs;
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
 
 #[allow(unused)]
@@ -213,7 +213,8 @@ fn persist_sync_items(
                 format_naive_datetime(&item.start_at),
                 item.end_at.map(|value| format_naive_datetime(&value)),
                 item.created_at.map(|value| format_naive_datetime(&value)),
-                item.last_modified.map(|value| format_naive_datetime(&value)),
+                item.last_modified
+                    .map(|value| format_naive_datetime(&value)),
             ])?;
         }
     }
@@ -273,10 +274,7 @@ fn load_last_synced_at(calendar_id: Uuid) -> Result<Option<NaiveDateTime>, Box<d
         )
         .optional()?;
 
-    Ok(value
-        .as_deref()
-        .map(parse_naive_datetime)
-        .transpose()?)
+    Ok(value.as_deref().map(parse_naive_datetime).transpose()?)
 }
 
 fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, Box<dyn Error>> {
@@ -466,7 +464,11 @@ fn prompt_profile_index(profiles: &[ConfigProfile]) -> Result<usize, Box<dyn Err
 fn prompt_unique_calendar_label(profile: &ConfigProfile) -> Result<String, Box<dyn Error>> {
     loop {
         let label = prompt_required("Calendar label")?;
-        if profile.calendar.iter().any(|calendar| calendar.label == label) {
+        if profile
+            .calendar
+            .iter()
+            .any(|calendar| calendar.label == label)
+        {
             println!("calendar already exists in this profile");
             continue;
         }
@@ -615,7 +617,10 @@ fn parse_item(item: &ICalendarComponent) -> Option<CalendarItem> {
 }
 
 fn remote_calendar_id(profile_name: &str, url: &str) -> Uuid {
-    Uuid::new_v5(&Uuid::NAMESPACE_URL, format!("{profile_name}:{url}").as_bytes())
+    Uuid::new_v5(
+        &Uuid::NAMESPACE_URL,
+        format!("{profile_name}:{url}").as_bytes(),
+    )
 }
 
 fn remote_profile_id(profile_name: &str) -> Uuid {
@@ -885,8 +890,14 @@ mod tests {
 
     #[test]
     fn parses_calendar_type_choice() {
-        assert!(matches!(parse_calendar_type_choice("1"), Some(CalendarType::ICS)));
-        assert!(matches!(parse_calendar_type_choice("2"), Some(CalendarType::Gmail)));
+        assert!(matches!(
+            parse_calendar_type_choice("1"),
+            Some(CalendarType::ICS)
+        ));
+        assert!(matches!(
+            parse_calendar_type_choice("2"),
+            Some(CalendarType::Gmail)
+        ));
         assert!(parse_calendar_type_choice("nope").is_none());
     }
 
@@ -969,11 +980,9 @@ mod tests {
             .unwrap();
 
         let stored_synced_at: String = conn
-            .query_row(
-                "SELECT last_synced_at FROM sync_calendars",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT last_synced_at FROM sync_calendars", [], |row| {
+                row.get(0)
+            })
             .unwrap();
 
         let count: i64 = conn

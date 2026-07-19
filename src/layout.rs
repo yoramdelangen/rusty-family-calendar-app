@@ -256,7 +256,12 @@ impl AppLayout {
     }
 
     pub(crate) fn draw(&mut self, buffer: &mut [u32], window_width: u32, window_height: u32) {
-        debug!(window_width, window_height, buffer_len = buffer.len(), "draw frame");
+        debug!(
+            window_width,
+            window_height,
+            buffer_len = buffer.len(),
+            "draw frame"
+        );
         buffer.fill(self.color_to_pixel(THEME.surface));
 
         struct WindowSize {
@@ -381,12 +386,22 @@ fn calculate_layout_measurement(
     match &mut node.kind {
         NodeKind::Text(txt_content) => {
             // get max available with
-            let max_width = match available_space.width {
-                AvailableSpace::Definite(w) => Some(w),
-                _ => None,
+            let max_width = if txt_content.is_pill {
+                // ponytail: pills stay single-line; if wrapping is ever needed, re-enable width capping here.
+                None
+            } else {
+                match available_space.width {
+                    AvailableSpace::Definite(w) => Some(w),
+                    _ => None,
+                }
             };
 
-            let size = FONT.measure_text(&txt_content.content, &node.style.font_size, max_width);
+            let size = FONT.measure_text(
+                &txt_content.content,
+                &node.style.font_size,
+                max_width,
+                txt_content.ellipsis,
+            );
             debug!(
                 node = %_node_name,
                 content = %txt_content.content,
