@@ -11,7 +11,7 @@ use calcard::{
     icalendar::{ICalendarComponent, ICalendarComponentType, ICalendarProperty, ICalendarValue},
 };
 use chrono::{Datelike, NaiveDateTime, Utc};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -112,8 +112,7 @@ pub(crate) fn sync(
             publish_ttl: None,
         };
 
-        let last_synced_at = load_last_synced_at(calendar.id)?;
-        let items = sync_calendar(&calendar, previous_year, last_synced_at)?;
+        let items = sync_calendar(&calendar, previous_year)?;
         store_sync_items(&profile_id, &calendar, &items, Utc::now().naive_utc())?;
         synced_calendars += 1;
         synced_items += items.len();
@@ -264,21 +263,6 @@ fn ensure_sync_schema(conn: &Connection) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn load_last_synced_at(calendar_id: Uuid) -> Result<Option<NaiveDateTime>, Box<dyn Error>> {
-    let conn = Connection::open(db_path())?;
-    ensure_sync_schema(&conn)?;
-
-    let value: Option<String> = conn
-        .query_row(
-            "SELECT last_synced_at FROM sync_calendars WHERE calendar_id = ?1",
-            params![calendar_id.to_string()],
-            |row| row.get(0),
-        )
-        .optional()?;
-
-    Ok(value.as_deref().map(parse_naive_datetime).transpose()?)
-}
-
 fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, Box<dyn Error>> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let mut rows = stmt.query([])?;
@@ -365,16 +349,30 @@ pub(crate) fn save_config(config: &Config) -> Result<(), Box<dyn Error>> {
 }
 
 pub(crate) fn profile_color_for_index(index: usize) -> String {
-    match index % 4 {
-        0 => "#1e66f5".to_owned(),
-        1 => "#40a02b".to_owned(),
-        2 => "#fe640b".to_owned(),
-        _ => "#d20f39".to_owned(),
-    }
+    let hue = (index as f32 * 137.508) % 360.0;
+    let (r, g, b) = hsl_to_rgb(hue, 0.82, 0.48);
+    format!("#{r:02X}{g:02X}{b:02X}")
 }
 
-pub(crate) fn profile_id_from_name(profile_name: &str) -> Uuid {
-    remote_profile_id(profile_name)
+fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> (u8, u8, u8) {
+    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+    let x = chroma * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs());
+    let m = lightness - chroma / 2.0;
+
+    let (r, g, b) = match hue {
+        h if h < 60.0 => (chroma, x, 0.0),
+        h if h < 120.0 => (x, chroma, 0.0),
+        h if h < 180.0 => (0.0, chroma, x),
+        h if h < 240.0 => (0.0, x, chroma),
+        h if h < 300.0 => (x, 0.0, chroma),
+        _ => (chroma, 0.0, x),
+    };
+
+    (
+        ((r + m) * 255.0).round() as u8,
+        ((g + m) * 255.0).round() as u8,
+        ((b + m) * 255.0).round() as u8,
+    )
 }
 
 pub(crate) fn calendar_id_from(profile_name: &str, url: &str) -> Uuid {
@@ -552,9 +550,15 @@ fn other_error(message: impl Into<String>) -> Box<dyn Error> {
 fn sync_calendar(
     calendar: &Calendar,
     previous_year: u32,
-    since: Option<NaiveDateTime>,
 ) -> Result<Vec<CalendarItem>, Box<dyn Error>> {
     let input = download_ical(&calendar.url);
+    parse_calendar_items(&input, previous_year)
+}
+
+fn parse_calendar_items(
+    input: &str,
+    previous_year: u32,
+) -> Result<Vec<CalendarItem>, Box<dyn Error>> {
     let mut parser = Parser::new(&input);
     let mut items = Vec::new();
 
@@ -575,10 +579,6 @@ fn sync_calendar(
                         continue;
                     }
 
-                    if since.is_some_and(|threshold| item_sync_marker(&item) <= threshold) {
-                        continue;
-                    }
-
                     items.push(item);
                 }
             }
@@ -595,18 +595,8 @@ fn sync_calendar(
     Ok(items)
 }
 
-fn item_sync_marker(item: &CalendarItem) -> NaiveDateTime {
-    item.last_modified
-        .or(item.created_at)
-        .unwrap_or(item.start_at)
-}
-
 fn format_naive_datetime(value: &NaiveDateTime) -> String {
     value.format("%Y-%m-%d %H:%M:%S%.f").to_string()
-}
-
-fn parse_naive_datetime(value: &str) -> Result<NaiveDateTime, chrono::ParseError> {
-    NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f")
 }
 
 fn parse_item(item: &ICalendarComponent) -> Option<CalendarItem> {
@@ -884,7 +874,7 @@ fn get_datetime_by_name(
 
         None => match name {
             _ => {
-                dbg!(item);
+                // dbg!(item);
                 None
             }
         },
@@ -915,11 +905,32 @@ mod tests {
     }
 
     #[test]
+    fn parses_snapshot_items_without_delta_filtering() {
+        let input = "BEGIN:VCALENDAR\n\
+VERSION:2.0\n\
+BEGIN:VEVENT\n\
+UID:google-item\n\
+SUMMARY:Google item\n\
+DESCRIPTION:from gmail\n\
+DTSTART:20260102T090000Z\n\
+CREATED:20200101T090000Z\n\
+LAST-MODIFIED:20200101T090000Z\n\
+END:VEVENT\n\
+END:VCALENDAR";
+
+        let items = parse_calendar_items(input, 2025).unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "Google item");
+    }
+
+    #[test]
     fn selects_all_calendars_by_default() {
         let config = Config {
             profile: vec![
                 ConfigProfile {
                     name: "work".to_owned(),
+                    color: None,
                     calendar: vec![ConfigCalendar {
                         label: "primary".to_owned(),
                         account: "a".to_owned(),
@@ -930,6 +941,7 @@ mod tests {
                 },
                 ConfigProfile {
                     name: "home".to_owned(),
+                    color: None,
                     calendar: vec![ConfigCalendar {
                         label: "shared".to_owned(),
                         account: "b".to_owned(),
@@ -1009,8 +1021,25 @@ mod tests {
     }
 
     #[test]
-    fn profiles_get_stable_palette_colors() {
-        assert_eq!(profile_color_for_index(0), "#1e66f5");
-        assert_eq!(profile_color_for_index(1), "#40a02b");
+    fn profiles_get_generated_vibrant_colors() {
+        let first = profile_color_for_index(0);
+        let second = profile_color_for_index(1);
+
+        assert_eq!(first.len(), 7);
+        assert!(first.starts_with('#'));
+        assert_ne!(first, second);
+        assert!(crate::theme::parse_hex_color(&first).is_some());
+        assert!(color_channel_spread(&first) > 120);
+    }
+
+    fn color_channel_spread(hex: &str) -> u8 {
+        let value = u32::from_str_radix(hex.trim_start_matches('#'), 16).unwrap();
+        let channels = [
+            ((value >> 16) & 0xff) as u8,
+            ((value >> 8) & 0xff) as u8,
+            (value & 0xff) as u8,
+        ];
+
+        channels.iter().max().unwrap() - channels.iter().min().unwrap()
     }
 }
