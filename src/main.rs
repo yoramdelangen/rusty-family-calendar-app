@@ -41,6 +41,12 @@ const APP_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-dev");
 #[cfg(not(debug_assertions))]
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[cfg(target_os = "macos")]
+const FOOTER_PX: f32 = 16.0;
+
+#[cfg(not(target_os = "macos"))]
+const FOOTER_PX: f32 = 10.0;
+
 #[derive(FromArgs)]
 /// Rusty Calendar Pi
 struct Cli {
@@ -102,7 +108,7 @@ fn build_layout(layout: &mut AppLayout) -> (NodeId, NodeId, NodeId) {
         .name(node::NodeName::Footer)
         .width_full()
         .height(48.0)
-        .px(10.)
+        .px(FOOTER_PX)
         .border_color(THEME.border)
         .border_t(1.)
         .layout(|l| {
