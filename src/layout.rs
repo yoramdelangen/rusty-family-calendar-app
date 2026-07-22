@@ -106,17 +106,22 @@ impl AppLayout {
             AppEvent::Tick => self.update_clock(),
             AppEvent::PointerDown { x, y } => {
                 debug!(x, y, "pointer down");
+                self.update_pointer_state(x, y, EventDispatch::Press);
                 self.dispatch_press_at(x, y);
             }
             AppEvent::PointerUp { x, y } => {
                 debug!(x, y, "pointer up");
+                self.update_pointer_state(x, y, EventDispatch::Release);
                 self.dispatch_release_at(x, y);
             }
             AppEvent::PointerClick { x, y } => {
                 debug!(x, y, "pointer click");
                 self.dispatch_click_at(x, y);
             }
-            AppEvent::PointerMove { x, y } => self.dispatch_hover_at(x, y),
+            AppEvent::PointerMove { x, y } => {
+                self.update_pointer_state(x, y, EventDispatch::Hover);
+                self.dispatch_hover_at(x, y);
+            }
         }
     }
 
@@ -185,6 +190,42 @@ impl AppLayout {
             })
             .min_by(|a, b| node_area(a).total_cmp(&node_area(b)))
             .map(|node| node.taffy_id)
+    }
+
+    fn hit_test_state(&self, x: f32, y: f32, event: EventDispatch) -> Option<NodeId> {
+        self.nodes_state
+            .values()
+            .filter(|node| {
+                node_accepts_event(node, event)
+                    && node.state.visible
+                    && x >= node.rect.x()
+                    && x <= node.rect.x() + node.rect.width()
+                    && y >= node.rect.y()
+                    && y <= node.rect.y() + node.rect.height()
+            })
+            .min_by(|a, b| node_area(a).total_cmp(&node_area(b)))
+            .map(|node| node.taffy_id)
+    }
+
+    fn update_pointer_state(&mut self, x: f32, y: f32, event: EventDispatch) {
+        let target = self.hit_test_state(x, y, event);
+
+        for node in self.nodes_state.values_mut() {
+            let is_target = Some(node.taffy_id) == target;
+            let changed = match event {
+                EventDispatch::Hover => set_bool(&mut node.state.hovered, is_target),
+                EventDispatch::Press => {
+                    set_bool(&mut node.state.pressed, is_target)
+                        | set_bool(&mut node.state.focused, is_target)
+                }
+                EventDispatch::Release => set_bool(&mut node.state.pressed, false),
+                EventDispatch::Click => false,
+            };
+
+            if changed {
+                node.dirty_screen = true;
+            }
+        }
     }
 
     fn dispatch_node_event(&mut self, node_id: NodeId, event: EventDispatch) {
@@ -515,6 +556,24 @@ fn node_area(node: &Node) -> f32 {
     node.rect.width() * node.rect.height()
 }
 
+fn set_bool(value: &mut bool, next: bool) -> bool {
+    if *value == next {
+        false
+    } else {
+        *value = next;
+        true
+    }
+}
+
+fn node_accepts_event(node: &Node, event: EventDispatch) -> bool {
+    match event {
+        EventDispatch::Click => node.events.caps.contains(crate::node::EventCaps::CLICK),
+        EventDispatch::Press => node.events.caps.contains(crate::node::EventCaps::PRESS),
+        EventDispatch::Release => node.events.caps.contains(crate::node::EventCaps::RELEASE),
+        EventDispatch::Hover => node.events.caps.contains(crate::node::EventCaps::HOVER),
+    }
+}
+
 fn node_has_handler(node: &Node, event: EventDispatch) -> bool {
     match event {
         EventDispatch::Click => {
@@ -687,6 +746,48 @@ mod tests {
         assert_ne!(text.content, "old");
         assert!(node.dirty_layout);
         assert!(node.dirty_screen);
+    }
+
+    #[test]
+    fn pointer_events_update_node_state() {
+        let mut layout = AppLayout::new();
+        layout.create_node(
+            NodeName::other("stateful"),
+            NodeKind::Container,
+            Default::default(),
+            NodeEvents::default(),
+            None,
+        );
+        layout
+            .nodes_state
+            .get_mut(&NodeName::other("stateful"))
+            .unwrap()
+            .rect = tiny_skia::Rect::from_xywh(0.0, 0.0, 100.0, 100.0).unwrap();
+
+        layout.handle_event(AppEvent::PointerMove { x: 5.0, y: 5.0 });
+        let node = layout
+            .nodes_state
+            .get(&NodeName::other("stateful"))
+            .unwrap();
+        assert!(node.state.hovered);
+        assert!(!node.state.pressed);
+        assert!(!node.state.focused);
+
+        layout.handle_event(AppEvent::PointerDown { x: 5.0, y: 5.0 });
+        let node = layout
+            .nodes_state
+            .get(&NodeName::other("stateful"))
+            .unwrap();
+        assert!(node.state.pressed);
+        assert!(node.state.focused);
+
+        layout.handle_event(AppEvent::PointerUp { x: 5.0, y: 5.0 });
+        let node = layout
+            .nodes_state
+            .get(&NodeName::other("stateful"))
+            .unwrap();
+        assert!(!node.state.pressed);
+        assert!(node.state.focused);
     }
 
     #[test]

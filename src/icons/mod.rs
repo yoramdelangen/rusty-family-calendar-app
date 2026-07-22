@@ -1,6 +1,5 @@
-use std::fs::exists;
+use std::path::{Path, PathBuf};
 
-use cosmic_text::skrifa::color;
 use tiny_skia::{IntSize, PixmapMut, Transform};
 use usvg::{Options, Size, Tree};
 
@@ -24,17 +23,21 @@ pub struct IconInfo {
 
 impl IconInfo {
     pub fn new(path: &str) -> Self {
-        let path = if exists(format!("src/icons/{}", path)).is_ok() {
-            format!("src/icons/{}", path)
-        } else if exists(format!("src/icons/{}.svg", path)).is_ok() {
-            format!("src/icons/{}.svg", path)
+        let icon_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/icons");
+        let path = if Path::new(path).exists() {
+            PathBuf::from(path)
+        } else if icon_dir.join(path).exists() {
+            icon_dir.join(path)
+        } else if icon_dir.join(format!("{path}.svg")).exists() {
+            icon_dir.join(format!("{path}.svg"))
         } else {
-            unreachable!("File does not exists")
+            unreachable!("icon does not exist: {path}")
         };
+        let path = path.to_string_lossy().to_string();
         let tree = read_svg(&path, usvg::Options::default());
 
         Self {
-            path: path.to_string(),
+            path,
             size: tree.size().to_int_size(),
         }
     }

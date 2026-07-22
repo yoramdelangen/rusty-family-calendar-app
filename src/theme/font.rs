@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::{path::Path, sync::Mutex};
 
 use cosmic_text::{
     Attrs, Buffer, Ellipsize, EllipsizeHeightLimit, FontSystem, Metrics, Shaping, SwashCache, Wrap,
@@ -29,8 +29,14 @@ pub(crate) struct FontTheme {
 
 impl FontTheme {
     pub fn new() -> Self {
+        let mut system = FontSystem::new();
+        let font_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts");
+        if font_dir.exists() {
+            system.db_mut().load_fonts_dir(font_dir);
+        }
+
         Self {
-            system: Mutex::new(FontSystem::new()),
+            system: Mutex::new(system),
             cache: Mutex::new(SwashCache::new()),
 
             // Sizes inspired by Tailwindcss
@@ -84,7 +90,10 @@ impl FontTheme {
 
         debug!(content, width, height, max_width = ?max_width, "measure text");
 
-        taffy::Size { width, height }
+        taffy::Size {
+            width: width.ceil(),
+            height: height.ceil(),
+        }
     }
 
     pub fn draw_on_canvas(&self, canvas: &mut Pixmap, node: &Node, content: &str) {
@@ -185,4 +194,20 @@ impl FontSize {
     // pub fn new(size: f32, line_height: f32) -> Self {
     //     Self { size, line_height }
     // }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn measure_text_honors_max_width_and_rounds_up() {
+        let fonts = FontTheme::new();
+        let size = FontSize::new_calc(16.0, 1.5);
+        let measured = fonts.measure_text("a long enough line to wrap", &size, Some(40.0), false);
+
+        assert!(measured.width <= 40.0);
+        assert_eq!(measured.width.fract(), 0.0);
+        assert_eq!(measured.height.fract(), 0.0);
+    }
 }

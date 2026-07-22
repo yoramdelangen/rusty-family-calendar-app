@@ -70,6 +70,8 @@ fn build_layout(layout: &mut AppLayout) -> (NodeId, NodeId, NodeId) {
         .child(
             text(Local::now().format("%H:%M:%S").to_string())
                 .name(node::NodeName::Clock)
+                .width(96.)
+                .text_align(Align::Center)
                 .px(16.),
         )
         .build(layout);
