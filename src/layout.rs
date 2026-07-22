@@ -414,8 +414,8 @@ impl AppLayout {
                 let offset_y = offset.y + node.location.y;
 
                 node_state.offset = Point {
-                    x: offset_x + node.padding.left,
-                    y: offset_y + node.padding.top,
+                    x: offset_x,
+                    y: offset_y,
                 };
 
                 // we basically need to make pills display: inline-block
