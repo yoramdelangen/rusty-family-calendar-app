@@ -62,6 +62,15 @@ fn build_layout(layout: &mut AppLayout) -> (NodeId, NodeId, NodeId) {
         .name(node::NodeName::Header)
         .height(64.0)
         .border_b(1.0)
+        .layout(|l| {
+            l.align_items = Some(AlignItems::Center);
+            l.justify_content = Some(JustifyContent::FlexEnd);
+        })
+        .child(
+            text(Local::now().format("%H:%M:%S").to_string())
+                .name(node::NodeName::Clock)
+                .px(16.),
+        )
         .build(layout);
 
     let content = div()
