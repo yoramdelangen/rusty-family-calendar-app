@@ -1,8 +1,12 @@
 use std::{
+    collections::HashMap,
     error::Error,
     fs,
     io::{self, Write},
     path::PathBuf,
+    sync::mpsc::{self, Receiver, Sender},
+    thread,
+    time::Duration,
 };
 
 use argh::FromArgs;
@@ -10,7 +14,7 @@ use calcard::{
     Parser,
     icalendar::{ICalendarComponent, ICalendarComponentType, ICalendarProperty, ICalendarValue},
 };
-use chrono::{Datelike, NaiveDateTime, Utc};
+use chrono::{DateTime, Datelike, NaiveDateTime, Utc};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -27,7 +31,7 @@ pub(crate) struct Calendar {
 }
 
 #[allow(unused)]
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub(crate) struct CalendarItem {
     uid: String,
     label: String,
@@ -58,13 +62,39 @@ pub(crate) enum CalendarCommand {
 /// Add a calendar
 pub(crate) struct CalendarAddArgs {}
 
-#[derive(Deserialize, Serialize, Debug)]
+const MIN_SYNC_INTERVAL_SECONDS: i64 = 5 * 60;
+
+#[derive(Clone, Debug)]
+pub(crate) enum CalendarChange {
+    Created { title: String },
+    Updated { title: String },
+    Removed { title: String },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum SyncStatus {
+    Syncing {
+        calendar: String,
+    },
+    Synced {
+        synced_at: DateTime<Utc>,
+        next_sync_at: DateTime<Utc>,
+        changes: Vec<CalendarChange>,
+    },
+    Failed {
+        calendar: String,
+        error: String,
+        next_sync_at: DateTime<Utc>,
+    },
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub(crate) enum CalendarType {
     ICS,
     Gmail,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub(crate) struct ConfigProfile {
     pub(crate) name: String,
     #[serde(default)]
@@ -73,7 +103,7 @@ pub(crate) struct ConfigProfile {
     pub(crate) calendar: Vec<ConfigCalendar>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub(crate) struct ConfigCalendar {
     pub(crate) label: String,
     pub(crate) account: String,
@@ -84,7 +114,7 @@ pub(crate) struct ConfigCalendar {
     pub(crate) color: Option<String>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub(crate) struct Config {
     pub(crate) profile: Vec<ConfigProfile>,
 }
@@ -112,21 +142,157 @@ pub(crate) fn sync(
             publish_ttl: None,
         };
 
-        let items = sync_calendar(&calendar, previous_year)?;
-        store_sync_items(&profile_id, &calendar, &items, Utc::now().naive_utc())?;
+        let result = sync_calendar(&calendar, previous_year)?;
+        store_sync_items(
+            &profile_id,
+            &calendar,
+            &result.items,
+            Utc::now().naive_utc(),
+            result.published_ttl_seconds,
+        )?;
         synced_calendars += 1;
-        synced_items += items.len();
+        synced_items += result.items.len();
 
         println!(
             "synced profile={} calendar={} items={}",
             profile.name,
             calendar.label,
-            items.len()
+            result.items.len()
         );
     }
 
     println!("done calendars={} items={}", synced_calendars, synced_items);
     Ok(())
+}
+
+pub(crate) fn start_sync_worker() -> Receiver<SyncStatus> {
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        if let Err(err) = sync_worker(tx.clone()) {
+            let next_sync_at = Utc::now() + chrono::Duration::seconds(MIN_SYNC_INTERVAL_SECONDS);
+            let _ = tx.send(SyncStatus::Failed {
+                calendar: "sync".to_owned(),
+                error: err.to_string(),
+                next_sync_at,
+            });
+        }
+    });
+
+    rx
+}
+
+fn sync_worker(tx: Sender<SyncStatus>) -> Result<(), Box<dyn Error>> {
+    let config = read_config()?;
+    let mut calendars = selected_calendars(&config, None, None)
+        .into_iter()
+        .map(|(profile, calendar)| WorkerCalendar {
+            profile_name: profile.name.clone(),
+            calendar: calendar.clone(),
+            next_sync_at: Utc::now(),
+        })
+        .collect::<Vec<_>>();
+
+    if calendars.is_empty() {
+        return Ok(());
+    }
+
+    loop {
+        let now = Utc::now();
+
+        for index in 0..calendars.len() {
+            if calendars[index].next_sync_at > now {
+                continue;
+            }
+
+            let _ = tx.send(SyncStatus::Syncing {
+                calendar: calendars[index].calendar.label.clone(),
+            });
+
+            let result =
+                sync_one_calendar(&calendars[index].profile_name, &calendars[index].calendar);
+            let status = match result {
+                Ok(outcome) => {
+                    calendars[index].next_sync_at = outcome.next_sync_at;
+                    SyncStatus::Synced {
+                        synced_at: outcome.synced_at,
+                        next_sync_at: next_worker_sync_at(&calendars),
+                        changes: outcome.changes,
+                    }
+                }
+                Err(err) => {
+                    calendars[index].next_sync_at =
+                        Utc::now() + chrono::Duration::seconds(MIN_SYNC_INTERVAL_SECONDS);
+                    SyncStatus::Failed {
+                        calendar: calendars[index].calendar.label.clone(),
+                        error: err.to_string(),
+                        next_sync_at: next_worker_sync_at(&calendars),
+                    }
+                }
+            };
+            let _ = tx.send(status);
+        }
+
+        thread::sleep(Duration::from_secs(1));
+    }
+}
+
+struct WorkerCalendar {
+    profile_name: String,
+    calendar: ConfigCalendar,
+    next_sync_at: DateTime<Utc>,
+}
+
+struct SyncOutcome {
+    synced_at: DateTime<Utc>,
+    next_sync_at: DateTime<Utc>,
+    changes: Vec<CalendarChange>,
+}
+
+fn next_worker_sync_at(calendars: &[WorkerCalendar]) -> DateTime<Utc> {
+    calendars
+        .iter()
+        .map(|calendar| calendar.next_sync_at)
+        .min()
+        .unwrap_or_else(Utc::now)
+}
+
+fn sync_one_calendar(
+    profile_name: &str,
+    calendar_cfg: &ConfigCalendar,
+) -> Result<SyncOutcome, Box<dyn Error>> {
+    let current_date = Utc::now();
+    let previous_year = (current_date.year() - 1) as u32;
+    let profile_id = remote_profile_id(profile_name);
+    let remote_calendar_id = remote_calendar_id(profile_name, &calendar_cfg.url);
+    let calendar = Calendar {
+        id: remote_calendar_id,
+        uid: remote_calendar_id.to_string(),
+        url: calendar_cfg.url.clone(),
+        label: calendar_cfg.label.clone(),
+        timezone: String::new(),
+        publish_ttl: None,
+    };
+
+    let result = sync_calendar(&calendar, previous_year)?;
+    let synced_at = Utc::now();
+    let changes = store_sync_items(
+        &profile_id,
+        &calendar,
+        &result.items,
+        synced_at.naive_utc(),
+        result.published_ttl_seconds,
+    )?;
+    let ttl = result
+        .published_ttl_seconds
+        .unwrap_or(MIN_SYNC_INTERVAL_SECONDS)
+        .max(MIN_SYNC_INTERVAL_SECONDS);
+
+    Ok(SyncOutcome {
+        synced_at,
+        next_sync_at: synced_at + chrono::Duration::seconds(ttl),
+        changes,
+    })
 }
 
 fn selected_calendars<'a>(
@@ -158,12 +324,20 @@ fn store_sync_items(
     calendar: &Calendar,
     items: &[CalendarItem],
     synced_at: NaiveDateTime,
-) -> Result<(), Box<dyn Error>> {
+    published_ttl_seconds: Option<i64>,
+) -> Result<Vec<CalendarChange>, Box<dyn Error>> {
     let mut conn = Connection::open(db_path())?;
-    persist_sync_items(&mut conn, profile_id, calendar, items, synced_at)?;
-    Ok(())
+    persist_sync_items_with_ttl(
+        &mut conn,
+        profile_id,
+        calendar,
+        items,
+        synced_at,
+        published_ttl_seconds,
+    )
 }
 
+#[cfg(test)]
 fn persist_sync_items(
     conn: &mut Connection,
     profile_id: &Uuid,
@@ -171,19 +345,34 @@ fn persist_sync_items(
     items: &[CalendarItem],
     synced_at: NaiveDateTime,
 ) -> Result<(), Box<dyn Error>> {
+    persist_sync_items_with_ttl(conn, profile_id, calendar, items, synced_at, None).map(|_| ())
+}
+
+fn persist_sync_items_with_ttl(
+    conn: &mut Connection,
+    profile_id: &Uuid,
+    calendar: &Calendar,
+    items: &[CalendarItem],
+    synced_at: NaiveDateTime,
+    published_ttl_seconds: Option<i64>,
+) -> Result<Vec<CalendarChange>, Box<dyn Error>> {
     ensure_sync_schema(conn)?;
+    let old_items = load_stored_items(conn, &calendar.id)?;
+    let changes = calendar_changes(&old_items, items);
 
     let tx = conn.transaction()?;
     tx.execute(
-        "INSERT INTO sync_calendars (calendar_id, profile_id, last_synced_at)
-         VALUES (?1, ?2, ?3)
+        "INSERT INTO sync_calendars (calendar_id, profile_id, last_synced_at, published_ttl_seconds)
+         VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(calendar_id) DO UPDATE SET
              profile_id = excluded.profile_id,
-             last_synced_at = excluded.last_synced_at",
+             last_synced_at = excluded.last_synced_at,
+             published_ttl_seconds = excluded.published_ttl_seconds",
         params![
             calendar.id.to_string(),
             profile_id.to_string(),
             format_naive_datetime(&synced_at),
+            published_ttl_seconds,
         ],
     )?;
     tx.execute(
@@ -221,7 +410,95 @@ fn persist_sync_items(
     }
 
     tx.commit()?;
-    Ok(())
+    Ok(changes)
+}
+
+fn load_stored_items(
+    conn: &Connection,
+    calendar_id: &Uuid,
+) -> Result<Vec<CalendarItem>, Box<dyn Error>> {
+    ensure_sync_schema(conn)?;
+    let mut stmt = conn.prepare(
+        "SELECT item_uid, item_label, description, start_at, end_at, created_at, last_modified
+         FROM sync_items
+         WHERE calendar_id = ?1",
+    )?;
+    let mut rows = stmt.query(params![calendar_id.to_string()])?;
+    let mut items = Vec::new();
+
+    while let Some(row) = rows.next()? {
+        let start_at: String = row.get(3)?;
+        let end_at: Option<String> = row.get(4)?;
+        let created_at: Option<String> = row.get(5)?;
+        let last_modified: Option<String> = row.get(6)?;
+
+        items.push(CalendarItem {
+            uid: row.get(0)?,
+            label: row.get(1)?,
+            description: row.get(2)?,
+            start_at: parse_stored_datetime(&start_at)?,
+            end_at: end_at.as_deref().map(parse_stored_datetime).transpose()?,
+            created_at: created_at
+                .as_deref()
+                .map(parse_stored_datetime)
+                .transpose()?,
+            last_modified: last_modified
+                .as_deref()
+                .map(parse_stored_datetime)
+                .transpose()?,
+        });
+    }
+
+    Ok(items)
+}
+
+fn parse_stored_datetime(value: &str) -> Result<NaiveDateTime, chrono::ParseError> {
+    NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f")
+        .or_else(|_| NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S"))
+}
+
+fn calendar_changes(old_items: &[CalendarItem], new_items: &[CalendarItem]) -> Vec<CalendarChange> {
+    let old_by_uid = old_items
+        .iter()
+        .map(|item| (item.uid.as_str(), item))
+        .collect::<HashMap<_, _>>();
+    let new_by_uid = new_items
+        .iter()
+        .map(|item| (item.uid.as_str(), item))
+        .collect::<HashMap<_, _>>();
+    let mut changes = Vec::new();
+
+    for item in new_items {
+        match old_by_uid.get(item.uid.as_str()) {
+            None => changes.push(CalendarChange::Created {
+                title: item.label.clone(),
+            }),
+            Some(old) if calendar_item_changed(old, item) => {
+                changes.push(CalendarChange::Updated {
+                    title: item.label.clone(),
+                })
+            }
+            _ => {}
+        }
+    }
+
+    for item in old_items {
+        if !new_by_uid.contains_key(item.uid.as_str()) {
+            changes.push(CalendarChange::Removed {
+                title: item.label.clone(),
+            });
+        }
+    }
+
+    changes
+}
+
+fn calendar_item_changed(old: &CalendarItem, new: &CalendarItem) -> bool {
+    old.label != new.label
+        || old.description != new.description
+        || old.start_at != new.start_at
+        || old.end_at != new.end_at
+        || old.last_modified != new.last_modified
 }
 
 fn ensure_sync_schema(conn: &Connection) -> Result<(), Box<dyn Error>> {
@@ -229,7 +506,8 @@ fn ensure_sync_schema(conn: &Connection) -> Result<(), Box<dyn Error>> {
         "CREATE TABLE IF NOT EXISTS sync_calendars (
             calendar_id TEXT PRIMARY KEY NOT NULL,
             profile_id TEXT NOT NULL,
-            last_synced_at TEXT
+            last_synced_at TEXT,
+            published_ttl_seconds INTEGER
         )",
         [],
     )?;
@@ -252,6 +530,13 @@ fn ensure_sync_schema(conn: &Connection) -> Result<(), Box<dyn Error>> {
     if !has_column(conn, "sync_calendars", "last_synced_at")? {
         conn.execute(
             "ALTER TABLE sync_calendars ADD COLUMN last_synced_at TEXT",
+            [],
+        )?;
+    }
+
+    if !has_column(conn, "sync_calendars", "published_ttl_seconds")? {
+        conn.execute(
+            "ALTER TABLE sync_calendars ADD COLUMN published_ttl_seconds INTEGER",
             [],
         )?;
     }
@@ -550,22 +835,38 @@ fn other_error(message: impl Into<String>) -> Box<dyn Error> {
 fn sync_calendar(
     calendar: &Calendar,
     previous_year: u32,
-) -> Result<Vec<CalendarItem>, Box<dyn Error>> {
+) -> Result<SyncCalendarResult, Box<dyn Error>> {
     let input = download_ical(&calendar.url);
     parse_calendar_items(&input, previous_year)
+}
+
+struct SyncCalendarResult {
+    items: Vec<CalendarItem>,
+    published_ttl_seconds: Option<i64>,
 }
 
 fn parse_calendar_items(
     input: &str,
     previous_year: u32,
-) -> Result<Vec<CalendarItem>, Box<dyn Error>> {
+) -> Result<SyncCalendarResult, Box<dyn Error>> {
     let mut parser = Parser::new(&input);
     let mut items = Vec::new();
+    let mut published_ttl_seconds = None;
 
     loop {
         match parser.entry() {
             calcard::Entry::ICalendar(ical) => {
                 for component in ical.components {
+                    if matches!(component.component_type, ICalendarComponentType::VCalendar) {
+                        published_ttl_seconds = get_optional_property_value_by_name(
+                            &component,
+                            ICalendarProperty::Other("X-PUBLISHED-TTL".to_owned()),
+                        )
+                        .as_deref()
+                        .and_then(parse_ical_duration_seconds);
+                        continue;
+                    }
+
                     if !matches!(component.component_type, ICalendarComponentType::VEvent) {
                         continue;
                     }
@@ -592,7 +893,41 @@ fn parse_calendar_items(
         }
     }
 
-    Ok(items)
+    Ok(SyncCalendarResult {
+        items,
+        published_ttl_seconds,
+    })
+}
+
+fn parse_ical_duration_seconds(value: &str) -> Option<i64> {
+    let mut chars = value.strip_prefix('P')?.chars().peekable();
+    let mut in_time = false;
+    let mut number = String::new();
+    let mut seconds = 0_i64;
+
+    while let Some(ch) = chars.next() {
+        if ch == 'T' {
+            in_time = true;
+            continue;
+        }
+
+        if ch.is_ascii_digit() {
+            number.push(ch);
+            continue;
+        }
+
+        let amount = number.parse::<i64>().ok()?;
+        number.clear();
+        seconds += match (in_time, ch) {
+            (false, 'D') => amount * 24 * 60 * 60,
+            (true, 'H') => amount * 60 * 60,
+            (true, 'M') => amount * 60,
+            (true, 'S') => amount,
+            _ => return None,
+        };
+    }
+
+    (seconds > 0 && number.is_empty()).then_some(seconds)
 }
 
 fn format_naive_datetime(value: &NaiveDateTime) -> String {
@@ -798,11 +1133,28 @@ fn download_ical(url: &str) -> String {
         .unwrap()
 }
 
-fn id_from_str(url: &str) -> Uuid {
-    Uuid::new_v5(&Uuid::NAMESPACE_URL, url.as_bytes())
+fn get_property_value_by_name(item: &ICalendarComponent, name: ICalendarProperty) -> String {
+    if let Some(value) = get_optional_property_value_by_name(item, name.clone()) {
+        return value;
+    }
+
+    match name {
+        ICalendarProperty::Description | ICalendarProperty::Summary => "".to_owned(),
+        _ => {
+            if name == ICalendarProperty::Other("X-WR-TIMEZONE".to_owned()) {
+                return "".to_owned();
+            }
+
+            dbg!(item);
+            todo!("Entry item \"{:?}\" by name not found!", name)
+        }
+    }
 }
 
-fn get_property_value_by_name(item: &ICalendarComponent, name: ICalendarProperty) -> String {
+fn get_optional_property_value_by_name(
+    item: &ICalendarComponent,
+    name: ICalendarProperty,
+) -> Option<String> {
     let en = item.entries.iter().find(|e| e.name == name);
     match en {
         Some(entry) => match entry.values.first().unwrap() {
@@ -838,19 +1190,9 @@ fn get_property_value_by_name(item: &ICalendarComponent, name: ICalendarProperty
             // ICalendarValue::Proximity(icalendar_proximity_value) => todo!(),
             val => val.clone().as_text().unwrap_or("").to_owned(),
         },
-
-        None => match name {
-            ICalendarProperty::Description | ICalendarProperty::Summary => "".to_owned(),
-            _ => {
-                if name == ICalendarProperty::Other("X-WR-TIMEZONE".to_owned()) {
-                    return "".to_owned();
-                }
-
-                dbg!(item);
-                todo!("Entry item \"{:?}\" by name not found!", name)
-            }
-        },
+        None => return None,
     }
+    .into()
 }
 
 fn get_datetime_by_name(
@@ -920,8 +1262,43 @@ END:VCALENDAR";
 
         let items = parse_calendar_items(input, 2025).unwrap();
 
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].label, "Google item");
+        assert_eq!(items.items.len(), 1);
+        assert_eq!(items.items[0].label, "Google item");
+    }
+
+    #[test]
+    fn parses_published_ttl_duration() {
+        assert_eq!(parse_ical_duration_seconds("PT30M"), Some(30 * 60));
+        assert_eq!(parse_ical_duration_seconds("PT1H"), Some(60 * 60));
+        assert_eq!(parse_ical_duration_seconds("P1D"), Some(24 * 60 * 60));
+        assert_eq!(parse_ical_duration_seconds("nope"), None);
+    }
+
+    #[test]
+    fn detects_calendar_item_changes() {
+        let kept = test_item("kept", "Kept", 9);
+        let old_updated = test_item("updated", "Old", 10);
+        let removed = test_item("removed", "Removed", 11);
+        let new_updated = test_item("updated", "New", 10);
+        let created = test_item("created", "Created", 12);
+
+        let changes = calendar_changes(
+            &[kept.clone(), old_updated, removed],
+            &[kept, new_updated, created],
+        );
+
+        assert!(matches!(
+            changes[0],
+            CalendarChange::Updated { ref title } if title == "New"
+        ));
+        assert!(matches!(
+            changes[1],
+            CalendarChange::Created { ref title } if title == "Created"
+        ));
+        assert!(matches!(
+            changes[2],
+            CalendarChange::Removed { ref title } if title == "Removed"
+        ));
     }
 
     #[test]
@@ -1041,5 +1418,20 @@ END:VCALENDAR";
         ];
 
         channels.iter().max().unwrap() - channels.iter().min().unwrap()
+    }
+
+    fn test_item(uid: &str, label: &str, hour: u32) -> CalendarItem {
+        CalendarItem {
+            uid: uid.to_owned(),
+            label: label.to_owned(),
+            description: String::new(),
+            start_at: chrono::NaiveDate::from_ymd_opt(2026, 1, 2)
+                .unwrap()
+                .and_hms_opt(hour, 0, 0)
+                .unwrap(),
+            end_at: None,
+            created_at: None,
+            last_modified: None,
+        }
     }
 }

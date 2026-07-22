@@ -2,12 +2,12 @@ use std::collections::HashMap;
 
 use chrono::Local;
 use taffy::{FlexDirection, NodeId, TaffyTree, prelude::*};
-use tiny_skia::{Color, Path, PathBuilder, Point};
+use tiny_skia::{Color, Point};
 use tracing::{debug, info_span, trace};
 
 use crate::{
     event::AppEvent,
-    icons::read_svg,
+    icons::IconInfo,
     node::{Node, NodeKind, NodeName, Style},
     theme::{THEME, font::FONT},
 };
@@ -148,6 +148,39 @@ impl AppLayout {
 
         if let NodeKind::Text(txt) = &mut node.kind {
             txt.content = text.into();
+            node.dirty_layout = true;
+            node.dirty_screen = true;
+        }
+    }
+
+    pub fn set_text_by_name(&mut self, node_name: NodeName, text: impl Into<String>) {
+        let Some(node) = self.nodes_state.get_mut(&node_name) else {
+            return;
+        };
+
+        if let NodeKind::Text(txt) = &mut node.kind {
+            txt.content = text.into();
+            node.dirty_layout = true;
+            node.dirty_screen = true;
+        }
+    }
+
+    pub fn set_text_color_by_name(&mut self, node_name: NodeName, color: Color) {
+        let Some(node) = self.nodes_state.get_mut(&node_name) else {
+            return;
+        };
+
+        node.style.text_color = color;
+        node.dirty_screen = true;
+    }
+
+    pub fn set_icon_by_name(&mut self, node_name: NodeName, icon: &str) {
+        let Some(node) = self.nodes_state.get_mut(&node_name) else {
+            return;
+        };
+
+        if matches!(node.kind, NodeKind::Icon(_)) {
+            node.kind = NodeKind::Icon(IconInfo::new(icon));
             node.dirty_layout = true;
             node.dirty_screen = true;
         }

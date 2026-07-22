@@ -1,43 +1,29 @@
-use std::path::{Path, PathBuf};
-
 use tiny_skia::{IntSize, PixmapMut, Transform};
 use usvg::{Options, Size, Tree};
 
 use crate::{node::Node, theme::color_to_hex};
 
-pub fn read_svg(path: &str, opts: Options) -> Tree {
-    let svg_file = std::fs::read(path)
-        .map_err(|e| format!("{} - {}", e, path))
-        .expect("Icon not found");
+include!(concat!(env!("OUT_DIR"), "/embedded_icons.rs"));
 
-    Tree::from_data(&svg_file, &opts)
+pub fn read_svg(path: &str, opts: Options) -> Tree {
+    let svg = embedded_icon(path).unwrap_or_else(|| panic!("icon not found: {path}"));
+    Tree::from_data(svg, &opts)
         .map_err(|e| format!("{} - {}", e, path))
         .unwrap()
 }
 
 #[derive(Clone, Debug)]
 pub struct IconInfo {
-    path: String,
+    name: String,
     size: IntSize,
 }
 
 impl IconInfo {
     pub fn new(path: &str) -> Self {
-        let icon_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/icons");
-        let path = if Path::new(path).exists() {
-            PathBuf::from(path)
-        } else if icon_dir.join(path).exists() {
-            icon_dir.join(path)
-        } else if icon_dir.join(format!("{path}.svg")).exists() {
-            icon_dir.join(format!("{path}.svg"))
-        } else {
-            unreachable!("icon does not exist: {path}")
-        };
-        let path = path.to_string_lossy().to_string();
         let tree = read_svg(&path, usvg::Options::default());
 
         Self {
-            path,
+            name: path.to_string(),
             size: tree.size().to_int_size(),
         }
     }
@@ -66,7 +52,7 @@ impl IconInfo {
         // re-read the svg and inject css
         let mut opts = usvg::Options::default();
         opts.style_sheet = Some(format!("* {{ fill: {}; }}", color_hex));
-        let tree = read_svg(&self.path, opts);
+        let tree = read_svg(&self.name, opts);
 
         // calculate resize if needed
         let tree_size = tree.size();

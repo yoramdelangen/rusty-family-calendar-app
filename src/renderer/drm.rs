@@ -14,17 +14,17 @@ use drm::{
 use evdev::{AbsoluteAxisCode, Device as EvdevDevice, EventSummary, KeyCode};
 use taffy::{Size, prelude::length};
 
-use crate::AppLayout;
+use crate::app::App;
 use crate::event::AppEvent;
 
 pub(crate) struct DrmWindowRenderer;
 
 impl DrmWindowRenderer {
-    pub(crate) fn run(mut layout: AppLayout) {
-        Self::try_run(&mut layout).expect("failed to run DRM window renderer");
+    pub(crate) fn run(mut app: App) {
+        Self::try_run(&mut app).expect("failed to run DRM window renderer");
     }
 
-    fn try_run(layout: &mut AppLayout) -> Result<(), Box<dyn std::error::Error>> {
+    fn try_run(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         let device = Card::find()?;
         let resources = device.resource_handles()?;
 
@@ -54,13 +54,13 @@ impl DrmWindowRenderer {
             connector, encoder, crtc, width, height
         );
 
-        layout.render_layout(Size {
+        app.render_layout(Size {
             width: length(width as f32),
             height: length(height as f32),
         });
 
         let mut frame = vec![0_u32; (width * height) as usize];
-        layout.draw(&mut frame, width, height);
+        app.draw(&mut frame, width, height);
 
         let mut dumb = device.create_dumb_buffer((width, height), DrmFourcc::Xrgb8888, 32)?;
         let framebuffer = device.add_framebuffer(&dumb, 24, 32)?;
@@ -87,15 +87,15 @@ impl DrmWindowRenderer {
         let mut next_tick = Instant::now() + Duration::from_secs(1);
 
         loop {
-            let mut dirty = false;
+            let mut dirty = app.poll_sync();
 
             for touch in &mut touch_devices {
-                dirty |= touch.poll(layout, width, height);
+                dirty |= touch.poll(app, width, height);
             }
 
             let now = Instant::now();
             if now >= next_tick {
-                layout.handle_event(AppEvent::Tick);
+                app.handle_event(AppEvent::Tick);
                 dirty = true;
                 while now >= next_tick {
                     next_tick += Duration::from_secs(1);
@@ -103,13 +103,13 @@ impl DrmWindowRenderer {
             }
 
             if dirty {
-                layout.render_layout(Size {
+                app.render_layout(Size {
                     width: length(width as f32),
                     height: length(height as f32),
                 });
 
                 let mut frame = vec![0_u32; (width * height) as usize];
-                layout.draw(&mut frame, width, height);
+                app.draw(&mut frame, width, height);
                 Self::copy_frame_to_dumb_buffer(
                     &frame,
                     &mut mapping,
@@ -256,7 +256,7 @@ impl TouchDevice {
         })
     }
 
-    fn poll(&mut self, layout: &mut AppLayout, width: u32, height: u32) -> bool {
+    fn poll(&mut self, app: &mut App, width: u32, height: u32) -> bool {
         let mut dirty = false;
 
         loop {
@@ -267,7 +267,7 @@ impl TouchDevice {
             };
 
             for event in events {
-                dirty |= self.handle_event(layout, event, width, height);
+                dirty |= self.handle_event(app, event, width, height);
             }
         }
 
@@ -276,7 +276,7 @@ impl TouchDevice {
 
     fn handle_event(
         &mut self,
-        layout: &mut AppLayout,
+        app: &mut App,
         event: evdev::InputEvent,
         width: u32,
         height: u32,
@@ -287,7 +287,7 @@ impl TouchDevice {
                 self.raw_x = Some(value);
                 if self.pressed {
                     if let Some((x, y)) = self.position(width, height) {
-                        layout.handle_event(AppEvent::PointerMove { x, y });
+                        app.handle_event(AppEvent::PointerMove { x, y });
                     }
                 }
                 true
@@ -297,7 +297,7 @@ impl TouchDevice {
                 self.raw_y = Some(value);
                 if self.pressed {
                     if let Some((x, y)) = self.position(width, height) {
-                        layout.handle_event(AppEvent::PointerMove { x, y });
+                        app.handle_event(AppEvent::PointerMove { x, y });
                     }
                 }
                 true
@@ -305,15 +305,15 @@ impl TouchDevice {
             EventSummary::Key(_, KeyCode::BTN_TOUCH, value) if value > 0 => {
                 self.pressed = true;
                 if let Some((x, y)) = self.position(width, height) {
-                    layout.handle_event(AppEvent::PointerDown { x, y });
+                    app.handle_event(AppEvent::PointerDown { x, y });
                 }
                 true
             }
             EventSummary::Key(_, KeyCode::BTN_TOUCH, value) if value == 0 => {
                 self.pressed = false;
                 if let Some((x, y)) = self.position(width, height) {
-                    layout.handle_event(AppEvent::PointerUp { x, y });
-                    layout.handle_event(AppEvent::PointerClick { x, y });
+                    app.handle_event(AppEvent::PointerUp { x, y });
+                    app.handle_event(AppEvent::PointerClick { x, y });
                 }
                 true
             }

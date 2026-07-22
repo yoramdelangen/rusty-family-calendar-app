@@ -6,7 +6,7 @@ use std::{
 
 use softbuffer::{Context, Surface};
 use taffy::{Size, prelude::length};
-use winit::dpi::{LogicalSize, PhysicalSize};
+use winit::dpi::PhysicalSize;
 use winit::platform::macos::WindowAttributesExtMacOS;
 use winit::{
     application::ApplicationHandler,
@@ -15,7 +15,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use crate::AppLayout;
+use crate::app::App;
 use crate::event::AppEvent;
 
 type Winnie = Rc<Window>;
@@ -34,7 +34,7 @@ enum AppState {
 pub(crate) struct WinitWindowRenderer {
     context: Context<OwnedDisplayHandle>,
     state: AppState,
-    layout: AppLayout,
+    app: App,
     next_tick: Instant,
 }
 
@@ -42,15 +42,18 @@ impl ApplicationHandler for WinitWindowRenderer {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
         let mut should_render = false;
+
+        should_render |= self.app.poll_sync();
+
         while now >= self.next_tick {
-            self.layout.handle_event(AppEvent::Tick);
+            self.app.handle_event(AppEvent::Tick);
             should_render = true;
             self.next_tick += Duration::from_secs(1);
         }
 
         if should_render {
             if let AppState::Active { surface, .. } = &mut self.state {
-                Self::render_and_present(&mut self.layout, surface);
+                Self::render_and_present(&mut self.app, surface);
             }
         }
 
@@ -98,7 +101,7 @@ impl ApplicationHandler for WinitWindowRenderer {
             win.set_visible(true);
         }
 
-        Self::render_and_present(&mut self.layout, &mut surface);
+        Self::render_and_present(&mut self.app, &mut surface);
         self.state = AppState::Active {
             surface,
             cursor_pos: None,
@@ -133,7 +136,7 @@ impl ApplicationHandler for WinitWindowRenderer {
                 if let AppState::Active { cursor_pos, .. } = &mut self.state {
                     *cursor_pos = Some((position.x as f32, position.y as f32));
                 }
-                self.layout.handle_event(AppEvent::PointerMove {
+                self.app.handle_event(AppEvent::PointerMove {
                     x: position.x as f32,
                     y: position.y as f32,
                 });
@@ -149,12 +152,10 @@ impl ApplicationHandler for WinitWindowRenderer {
                 };
 
                 match state {
-                    ElementState::Pressed => {
-                        self.layout.handle_event(AppEvent::PointerDown { x, y })
-                    }
+                    ElementState::Pressed => self.app.handle_event(AppEvent::PointerDown { x, y }),
                     ElementState::Released => {
-                        self.layout.handle_event(AppEvent::PointerUp { x, y });
-                        self.layout.handle_event(AppEvent::PointerClick { x, y });
+                        self.app.handle_event(AppEvent::PointerUp { x, y });
+                        self.app.handle_event(AppEvent::PointerClick { x, y });
                     }
                 }
 
@@ -166,43 +167,42 @@ impl ApplicationHandler for WinitWindowRenderer {
 
         if redraw {
             if let AppState::Active { surface, .. } = &mut self.state {
-                Self::render_and_present(&mut self.layout, surface);
+                Self::render_and_present(&mut self.app, surface);
             }
         }
     }
 }
 
 impl WinitWindowRenderer {
-    fn new(event_loop: &EventLoop<()>, layout: AppLayout) -> Self {
+    fn new(event_loop: &EventLoop<()>, app: App) -> Self {
         Self {
             context: Context::new(event_loop.owned_display_handle()).expect("failed context"),
             state: AppState::Init,
-            layout,
+            app,
             next_tick: Instant::now() + Duration::from_secs(1),
         }
     }
 
-    fn render_and_present(
-        layout: &mut AppLayout,
-        surface: &mut Surface<OwnedDisplayHandle, Winnie>,
-    ) {
+    fn render_and_present(app: &mut App, surface: &mut Surface<OwnedDisplayHandle, Winnie>) {
         let handle = surface.window();
         let window_size = handle.inner_size();
-        layout.render_layout(Size {
+        app.render_layout(Size {
             width: length(window_size.width as f32),
             height: length(window_size.height as f32),
         });
 
         let mut buffer = surface.buffer_mut().expect("failed to map buffer");
-        layout.draw(buffer.as_mut(), window_size.width, window_size.height);
+        app.draw(buffer.as_mut(), window_size.width, window_size.height);
         buffer.present().expect("failed to present buffer");
     }
 
-    pub(crate) fn run(layout: AppLayout) {
+    pub(crate) fn run(app: App) {
         let event_loop = EventLoop::new().expect("failed to create event loop");
         event_loop.set_control_flow(ControlFlow::Wait);
 
-        let mut app = Self::new(&event_loop, layout);
-        event_loop.run_app(&mut app).expect("failed to run app");
+        let mut renderer = Self::new(&event_loop, app);
+        event_loop
+            .run_app(&mut renderer)
+            .expect("failed to run app");
     }
 }

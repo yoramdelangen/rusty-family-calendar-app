@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Mutex};
+use std::{path::PathBuf, sync::Mutex};
 
 use cosmic_text::{
     Attrs, Buffer, Ellipsize, EllipsizeHeightLimit, FontSystem, Metrics, Shaping, SwashCache, Wrap,
@@ -30,9 +30,10 @@ pub(crate) struct FontTheme {
 impl FontTheme {
     pub fn new() -> Self {
         let mut system = FontSystem::new();
-        let font_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts");
-        if font_dir.exists() {
-            system.db_mut().load_fonts_dir(font_dir);
+        for dir in font_dirs() {
+            if dir.exists() {
+                system.db_mut().load_fonts_dir(dir);
+            }
         }
 
         Self {
@@ -176,6 +177,21 @@ impl FontTheme {
             },
         );
     }
+}
+
+fn font_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    if let Some(path) = std::env::var_os("RUSTY_CALENDAR_PI_FONT_DIR") {
+        dirs.push(PathBuf::from(path));
+    }
+
+    if let Some(home) = std::env::var_os("HOME") {
+        dirs.push(PathBuf::from(home).join(".config/rusty-calendar-pi/fonts"));
+    }
+
+    dirs.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/fonts"));
+    dirs
 }
 
 #[derive(Clone, Debug)]

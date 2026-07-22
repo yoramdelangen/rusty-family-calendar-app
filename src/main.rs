@@ -1,3 +1,4 @@
+mod app;
 mod calendar;
 mod components;
 mod event;
@@ -25,9 +26,20 @@ use crate::layout::AppLayout;
 use crate::node::builder::BobTheBuilder;
 use crate::theme::THEME;
 use crate::{
-    components::{div, grid, pill, text},
+    components::{div, grid, icon, pill, text},
     node::builder::Builder,
 };
+
+pub(crate) const SYNC_ICON_NODE: &str = "sync-icon";
+pub(crate) const SYNC_STATUS_NODE: &str = "sync-status";
+pub(crate) const SYNC_CHANGES_NODE: &str = "sync-changes";
+pub(crate) const VERSION_NODE: &str = "version";
+
+#[cfg(debug_assertions)]
+const APP_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-dev");
+
+#[cfg(not(debug_assertions))]
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(FromArgs)]
 /// Rusty Calendar Pi
@@ -89,9 +101,46 @@ fn build_layout(layout: &mut AppLayout) -> (NodeId, NodeId, NodeId) {
     let footer = div()
         .name(node::NodeName::Footer)
         .width_full()
-        .height(32.0)
+        .height(48.0)
+        .px(10.)
         .border_color(THEME.border)
         .border_t(1.)
+        .layout(|l| {
+            l.flex_direction = FlexDirection::Row;
+            l.align_items = Some(AlignItems::Center);
+        })
+        .child(
+            icon("circle-fill")
+                .name(node::NodeName::other(SYNC_ICON_NODE))
+                .width(18.)
+                .height(18.)
+                .text_color(THEME.text_muted)
+                .px(5.),
+        )
+        .child(
+            text("next sync pending")
+                .name(node::NodeName::other(SYNC_STATUS_NODE))
+                .width(180.)
+                .text_color(THEME.text_muted),
+        )
+        .child(
+            text("no sync changes yet")
+                .name(node::NodeName::other(SYNC_CHANGES_NODE))
+                .width(0.)
+                .text_color(THEME.text_muted)
+                .ellipsis()
+                .layout(|l| {
+                    l.flex_grow = 1.0;
+                    l.flex_shrink = 1.0;
+                }),
+        )
+        .child(
+            text(APP_VERSION)
+                .name(node::NodeName::other(VERSION_NODE))
+                .width_auto()
+                .text_color(THEME.text_muted)
+                .text_align(Align::Right),
+        )
         .build(layout);
 
     (header, content, footer)
@@ -134,6 +183,11 @@ fn run() -> Result<(), Box<dyn Error>> {
 
 fn launch_app() {
     info!("launch app");
+    let sync_rx = crate::calendar::start_sync_worker();
+    renderer::run(app::App::new(sync_rx));
+}
+
+pub(crate) fn build_app_layout() -> AppLayout {
     let mut layout = AppLayout::new();
 
     let (_header, content, _footer) = build_layout(&mut layout);
@@ -219,8 +273,7 @@ fn launch_app() {
         .build(&mut layout);
 
     debug!("layout built");
-
-    renderer::run(layout);
+    layout
 }
 
 fn get_weekdays() -> Vec<String> {
