@@ -5,9 +5,9 @@ use taffy::{
 };
 use tiny_skia::Color;
 
-use crate::{layout::AppLayout, node::NodeName, theme::font::FontSize};
+use crate::{layout::AppLayout, node::NodeName};
 
-use super::{NodeKind, Style};
+use super::{EventCaps, NodeEvents, NodeKind, Style};
 
 pub trait BobTheBuilder {
     fn build(self, layout: &mut AppLayout) -> taffy::NodeId;
@@ -18,6 +18,7 @@ pub struct Builder {
     pub name: NodeName,
     pub kind: NodeKind,
     pub style: Style,
+    pub events: NodeEvents,
     pub parent_node: Option<NodeId>,
     children: Vec<Builder>,
 }
@@ -28,6 +29,7 @@ impl Builder {
             name: NodeName::default(),
             kind,
             style: Style::default(),
+            events: NodeEvents::default(),
             parent_node,
             children: Vec::new(),
         }
@@ -231,6 +233,46 @@ impl Builder {
         self
     }
 
+    pub fn events(mut self, caps: EventCaps) -> Self {
+        self.events.caps = caps;
+        self
+    }
+
+    pub fn on_click(self, f: impl FnMut(&mut AppLayout, NodeId) + 'static) -> Self {
+        self.attach_event(EventCaps::CLICK, |events| {
+            events.on_click = Some(std::rc::Rc::new(std::cell::RefCell::new(Box::new(f))));
+        })
+    }
+
+    pub fn on_press(self, f: impl FnMut(&mut AppLayout, NodeId) + 'static) -> Self {
+        self.attach_event(EventCaps::PRESS, |events| {
+            events.on_press = Some(std::rc::Rc::new(std::cell::RefCell::new(Box::new(f))));
+        })
+    }
+
+    pub fn on_release(self, f: impl FnMut(&mut AppLayout, NodeId) + 'static) -> Self {
+        self.attach_event(EventCaps::RELEASE, |events| {
+            events.on_release = Some(std::rc::Rc::new(std::cell::RefCell::new(Box::new(f))));
+        })
+    }
+
+    pub fn on_hover(self, f: impl FnMut(&mut AppLayout, NodeId) + 'static) -> Self {
+        self.attach_event(EventCaps::HOVER, |events| {
+            events.on_hover = Some(std::rc::Rc::new(std::cell::RefCell::new(Box::new(f))));
+        })
+    }
+
+    fn attach_event(mut self, cap: EventCaps, f: impl FnOnce(&mut NodeEvents)) -> Self {
+        debug_assert!(
+            self.events.caps.contains(cap),
+            "event not allowed on this component"
+        );
+        if self.events.caps.contains(cap) {
+            f(&mut self.events);
+        }
+        self
+    }
+
     pub fn ellipsis(mut self) -> Self {
         if let NodeKind::Text(txt_content) = &mut self.kind {
             txt_content.ellipsis = true;
@@ -249,7 +291,13 @@ impl Builder {
 
 impl BobTheBuilder for Builder {
     fn build(self, mut layout: &mut AppLayout) -> taffy::NodeId {
-        let node_id = layout.create_node(self.name, self.kind, self.style, self.parent_node);
+        let node_id = layout.create_node(
+            self.name,
+            self.kind,
+            self.style,
+            self.events,
+            self.parent_node,
+        );
 
         let child_ids: Vec<_> = self
             .children

@@ -1,4 +1,8 @@
-use std::{num::NonZeroU32, rc::Rc};
+use std::{
+    num::NonZeroU32,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use softbuffer::{Context, Surface};
 use taffy::{Size, prelude::length};
@@ -6,12 +10,13 @@ use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::platform::macos::WindowAttributesExtMacOS;
 use winit::{
     application::ApplicationHandler,
-    event::{StartCause, WindowEvent},
+    event::{ElementState, MouseButton, StartCause, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle},
     window::{Window, WindowId},
 };
 
 use crate::AppLayout;
+use crate::event::AppEvent;
 
 type Winnie = Rc<Window>;
 
@@ -22,6 +27,7 @@ enum AppState {
     },
     Active {
         surface: Surface<OwnedDisplayHandle, Winnie>,
+        cursor_pos: Option<(f32, f32)>,
     },
 }
 
@@ -29,9 +35,28 @@ pub(crate) struct WinitWindowRenderer {
     context: Context<OwnedDisplayHandle>,
     state: AppState,
     layout: AppLayout,
+    next_tick: Instant,
 }
 
 impl ApplicationHandler for WinitWindowRenderer {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let now = Instant::now();
+        let mut should_render = false;
+        while now >= self.next_tick {
+            self.layout.handle_event(AppEvent::Tick);
+            should_render = true;
+            self.next_tick += Duration::from_secs(1);
+        }
+
+        if should_render {
+            if let AppState::Active { surface, .. } = &mut self.state {
+                Self::render_and_present(&mut self.layout, surface);
+            }
+        }
+
+        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_tick));
+    }
+
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
         if let StartCause::Init = cause {
             let window_attrs = Window::default_attributes()
@@ -74,11 +99,14 @@ impl ApplicationHandler for WinitWindowRenderer {
         }
 
         Self::render_and_present(&mut self.layout, &mut surface);
-        self.state = AppState::Active { surface };
+        self.state = AppState::Active {
+            surface,
+            cursor_pos: None,
+        };
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        let AppState::Active { surface } = &mut self.state else {
+        let AppState::Active { surface, .. } = &mut self.state else {
             unreachable!("got suspended event while not active");
         };
 
@@ -87,23 +115,59 @@ impl ApplicationHandler for WinitWindowRenderer {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        let AppState::Active { surface } = &mut self.state else {
-            unreachable!("got window event while suspended");
-        };
-
+        let mut redraw = false;
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
-                surface
-                    .resize(
-                        NonZeroU32::new(size.width).unwrap(),
-                        NonZeroU32::new(size.height).unwrap(),
-                    )
-                    .expect("failed to resize surface");
+                if let AppState::Active { surface, .. } = &mut self.state {
+                    surface
+                        .resize(
+                            NonZeroU32::new(size.width).unwrap(),
+                            NonZeroU32::new(size.height).unwrap(),
+                        )
+                        .expect("failed to resize surface");
+                    redraw = true;
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                if let AppState::Active { cursor_pos, .. } = &mut self.state {
+                    *cursor_pos = Some((position.x as f32, position.y as f32));
+                }
+                self.layout.handle_event(AppEvent::PointerMove {
+                    x: position.x as f32,
+                    y: position.y as f32,
+                });
+            }
+            WindowEvent::MouseInput { state, button, .. } if button == MouseButton::Left => {
+                let cursor_pos = match &self.state {
+                    AppState::Active { cursor_pos, .. } => *cursor_pos,
+                    _ => None,
+                };
+
+                let Some((x, y)) = cursor_pos else {
+                    return;
+                };
+
+                match state {
+                    ElementState::Pressed => {
+                        self.layout.handle_event(AppEvent::PointerDown { x, y })
+                    }
+                    ElementState::Released => {
+                        self.layout.handle_event(AppEvent::PointerUp { x, y });
+                        self.layout.handle_event(AppEvent::PointerClick { x, y });
+                    }
+                }
+
+                redraw = true;
+            }
+            WindowEvent::RedrawRequested => redraw = true,
+            _ => {}
+        }
+
+        if redraw {
+            if let AppState::Active { surface, .. } = &mut self.state {
                 Self::render_and_present(&mut self.layout, surface);
             }
-            WindowEvent::RedrawRequested => Self::render_and_present(&mut self.layout, surface),
-            _ => {}
         }
     }
 }
@@ -114,6 +178,7 @@ impl WinitWindowRenderer {
             context: Context::new(event_loop.owned_display_handle()).expect("failed context"),
             state: AppState::Init,
             layout,
+            next_tick: Instant::now() + Duration::from_secs(1),
         }
     }
 

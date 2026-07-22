@@ -7,8 +7,8 @@ use tiny_skia::{Color, Point};
 use crate::{
     icons::IconInfo,
     node::{
-        NodeKind, NodeName, TextContent, builder::Builder, grid_builder::GridBuilder, next_node_id,
-        shape_builder::ShapeBuilder,
+        EventCaps, NodeKind, NodeName, TextContent, builder::Builder, grid_builder::GridBuilder,
+        next_node_id, shape_builder::ShapeBuilder,
     },
     theme::THEME,
 };
@@ -42,7 +42,7 @@ pub fn polygon(color: Color, points: Vec<Point>) -> ShapeBuilder {
 }
 
 pub fn text(val: impl Into<String>) -> Builder {
-    Builder::new(NodeKind::Text(TextContent::new(val)), None)
+    Builder::new(NodeKind::Text(TextContent::new(val)), None).events(EventCaps::empty())
 }
 
 pub fn icon(icon: &str) -> Builder {
@@ -70,6 +70,7 @@ pub fn grid_item(name: &str) -> Builder {
 
 pub fn pill(content: impl Into<String>) -> Builder {
     text(content)
+        .events(EventCaps::all())
         .width_auto()
         .pt(2.)
         .pb(4.)
@@ -82,4 +83,14 @@ pub fn pill(content: impl Into<String>) -> Builder {
             }
         })
         .background(THEME.surface_raised)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_starts_without_events() {
+        assert_eq!(text("hello").events.caps, EventCaps::empty());
+    }
 }

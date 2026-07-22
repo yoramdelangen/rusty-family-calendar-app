@@ -20,6 +20,7 @@ toml = "0.8"
 ureq = "3.3.0"
 usvg = "0.47.0"
 uuid = "1.23.5"
+evdev = "0.13.2"
 
 [target.'cfg(not(all(target_os = "linux", target_arch = "arm", target_abi = "eabihf", any(target_env = "gnu", target_env = "musl"))))'.dependencies]
 softbuffer = "0.4.8"

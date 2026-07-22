@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
+use chrono::Local;
 use taffy::{FlexDirection, NodeId, TaffyTree, prelude::*};
 use tiny_skia::{Color, Path, PathBuilder, Point};
 use tracing::{debug, info_span, trace};
 
 use crate::{
+    event::AppEvent,
     icons::read_svg,
     node::{Node, NodeKind, NodeName, Style},
     theme::{THEME, font::FONT},
@@ -46,6 +48,7 @@ impl AppLayout {
         name: NodeName,
         kind: NodeKind,
         style: Style,
+        events: crate::node::NodeEvents,
         parent_node: Option<NodeId>,
     ) -> NodeId {
         let node_id = self
@@ -64,7 +67,7 @@ impl AppLayout {
             )
             .expect("Cannot add child to parent");
 
-        let node = Node::new(node_id, name, kind, style);
+        let node = Node::new(node_id, name, kind, style, events);
 
         // warning if the node-name already exists
         if self.nodes_state.contains_key(&node.name) {
@@ -96,6 +99,132 @@ impl AppLayout {
         self.tree
             .set_children(parent, children)
             .expect("failed setting children");
+    }
+
+    pub fn handle_event(&mut self, event: AppEvent) {
+        match event {
+            AppEvent::Tick => self.update_clock(),
+            AppEvent::PointerDown { x, y } => {
+                debug!(x, y, "pointer down");
+                self.dispatch_press_at(x, y);
+            }
+            AppEvent::PointerUp { x, y } => {
+                debug!(x, y, "pointer up");
+                self.dispatch_release_at(x, y);
+            }
+            AppEvent::PointerClick { x, y } => {
+                debug!(x, y, "pointer click");
+                self.dispatch_click_at(x, y);
+            }
+            AppEvent::PointerMove { x, y } => self.dispatch_hover_at(x, y),
+        }
+    }
+
+    fn update_clock(&mut self) {
+        let Some(node) = self.nodes_state.get_mut(&NodeName::Clock) else {
+            return;
+        };
+
+        if let NodeKind::Text(txt) = &mut node.kind {
+            txt.content = Local::now().format("%H:%M:%S").to_string();
+            node.dirty_layout = true;
+            node.dirty_screen = true;
+        }
+    }
+
+    pub fn set_text(&mut self, node_id: NodeId, text: impl Into<String>) {
+        let Some(node_name) = self.nodes.get(&node_id).cloned() else {
+            return;
+        };
+
+        let Some(node) = self.nodes_state.get_mut(&node_name) else {
+            return;
+        };
+
+        if let NodeKind::Text(txt) = &mut node.kind {
+            txt.content = text.into();
+            node.dirty_layout = true;
+            node.dirty_screen = true;
+        }
+    }
+
+    pub fn dispatch_click_at(&mut self, x: f32, y: f32) {
+        if let Some(node_id) = self.hit_test_event(x, y, EventDispatch::Click) {
+            self.dispatch_node_event(node_id, EventDispatch::Click);
+        }
+    }
+
+    pub fn dispatch_press_at(&mut self, x: f32, y: f32) {
+        if let Some(node_id) = self.hit_test_event(x, y, EventDispatch::Press) {
+            self.dispatch_node_event(node_id, EventDispatch::Press);
+        }
+    }
+
+    pub fn dispatch_release_at(&mut self, x: f32, y: f32) {
+        if let Some(node_id) = self.hit_test_event(x, y, EventDispatch::Release) {
+            self.dispatch_node_event(node_id, EventDispatch::Release);
+        }
+    }
+
+    pub fn dispatch_hover_at(&mut self, x: f32, y: f32) {
+        if let Some(node_id) = self.hit_test_event(x, y, EventDispatch::Hover) {
+            self.dispatch_node_event(node_id, EventDispatch::Hover);
+        }
+    }
+
+    fn hit_test_event(&self, x: f32, y: f32, event: EventDispatch) -> Option<NodeId> {
+        self.nodes_state
+            .values()
+            .filter(|node| {
+                node_has_handler(node, event)
+                    && node.state.visible
+                    && x >= node.rect.x()
+                    && x <= node.rect.x() + node.rect.width()
+                    && y >= node.rect.y()
+                    && y <= node.rect.y() + node.rect.height()
+            })
+            .min_by(|a, b| node_area(a).total_cmp(&node_area(b)))
+            .map(|node| node.taffy_id)
+    }
+
+    fn dispatch_node_event(&mut self, node_id: NodeId, event: EventDispatch) {
+        let Some(node_name) = self.nodes.get(&node_id).cloned() else {
+            return;
+        };
+
+        let handler = {
+            let Some(node) = self.nodes_state.get(&node_name) else {
+                return;
+            };
+
+            match event {
+                EventDispatch::Click
+                    if node.events.caps.contains(crate::node::EventCaps::CLICK) =>
+                {
+                    node.events.on_click.clone()
+                }
+                EventDispatch::Press
+                    if node.events.caps.contains(crate::node::EventCaps::PRESS) =>
+                {
+                    node.events.on_press.clone()
+                }
+                EventDispatch::Release
+                    if node.events.caps.contains(crate::node::EventCaps::RELEASE) =>
+                {
+                    node.events.on_release.clone()
+                }
+                EventDispatch::Hover
+                    if node.events.caps.contains(crate::node::EventCaps::HOVER) =>
+                {
+                    node.events.on_hover.clone()
+                }
+                _ => None,
+            }
+        };
+
+        if let Some(handler) = handler {
+            (handler.borrow_mut())(self, node_id);
+        }
     }
 
     pub fn render_layout(&mut self, size: Size<Dimension>) {
@@ -374,6 +503,39 @@ impl AppLayout {
     }
 }
 
+#[derive(Clone, Copy)]
+enum EventDispatch {
+    Click,
+    Press,
+    Release,
+    Hover,
+}
+
+fn node_area(node: &Node) -> f32 {
+    node.rect.width() * node.rect.height()
+}
+
+fn node_has_handler(node: &Node, event: EventDispatch) -> bool {
+    match event {
+        EventDispatch::Click => {
+            node.events.caps.contains(crate::node::EventCaps::CLICK)
+                && node.events.on_click.is_some()
+        }
+        EventDispatch::Press => {
+            node.events.caps.contains(crate::node::EventCaps::PRESS)
+                && node.events.on_press.is_some()
+        }
+        EventDispatch::Release => {
+            node.events.caps.contains(crate::node::EventCaps::RELEASE)
+                && node.events.on_release.is_some()
+        }
+        EventDispatch::Hover => {
+            node.events.caps.contains(crate::node::EventCaps::HOVER)
+                && node.events.on_hover.is_some()
+        }
+    }
+}
+
 fn calculate_layout_measurement(
     known: Size<Option<f32>>,
     available_space: Size<AvailableSpace>,
@@ -464,4 +626,142 @@ fn blend_pixel(src: [u8; 4], dst: u32) -> u32 {
     let out_b = src_b + (dst_b * inv_a) / 255;
 
     (out_r << 16) | (out_g << 8) | out_b
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, rc::Rc};
+
+    use crate::{
+        event::AppEvent,
+        node::{EventCaps, NodeEvents, NodeKind, NodeName, TextContent},
+    };
+
+    use super::AppLayout;
+
+    #[test]
+    fn pointer_move_dispatches_hover() {
+        let mut layout = AppLayout::new();
+        let hit = Rc::new(RefCell::new(false));
+        let seen = hit.clone();
+
+        layout.create_node(
+            NodeName::other("hover"),
+            NodeKind::Container,
+            Default::default(),
+            NodeEvents {
+                caps: EventCaps::HOVER,
+                on_click: None,
+                on_press: None,
+                on_release: None,
+                on_hover: Some(Rc::new(RefCell::new(Box::new(move |_, _| {
+                    *seen.borrow_mut() = true;
+                })))),
+            },
+            None,
+        );
+
+        layout.handle_event(AppEvent::PointerMove { x: 0.5, y: 0.5 });
+
+        assert!(*hit.borrow());
+    }
+
+    #[test]
+    fn tick_updates_clock_text() {
+        let mut layout = AppLayout::new();
+
+        layout.create_node(
+            NodeName::Clock,
+            NodeKind::Text(TextContent::new("old")),
+            Default::default(),
+            NodeEvents::default(),
+            None,
+        );
+
+        layout.handle_event(AppEvent::Tick);
+
+        let node = layout.nodes_state.get(&NodeName::Clock).unwrap();
+        let NodeKind::Text(text) = &node.kind else {
+            panic!("clock node is not text");
+        };
+        assert_ne!(text.content, "old");
+        assert!(node.dirty_layout);
+        assert!(node.dirty_screen);
+    }
+
+    #[test]
+    fn click_prefers_smallest_clickable_node() {
+        let mut layout = AppLayout::new();
+        let cell_clicked = Rc::new(RefCell::new(false));
+        let item_clicked = Rc::new(RefCell::new(false));
+
+        let cell_seen = cell_clicked.clone();
+        layout.create_node(
+            NodeName::other("cell"),
+            NodeKind::Container,
+            Default::default(),
+            NodeEvents {
+                caps: EventCaps::CLICK,
+                on_click: Some(Rc::new(RefCell::new(Box::new(move |_, _| {
+                    *cell_seen.borrow_mut() = true;
+                })))),
+                on_press: None,
+                on_release: None,
+                on_hover: None,
+            },
+            None,
+        );
+
+        layout.create_node(
+            NodeName::other("text-child"),
+            NodeKind::Text(TextContent::new("child")),
+            Default::default(),
+            NodeEvents {
+                caps: EventCaps::empty(),
+                on_click: None,
+                on_press: None,
+                on_release: None,
+                on_hover: None,
+            },
+            None,
+        );
+
+        let item_seen = item_clicked.clone();
+        layout.create_node(
+            NodeName::other("item"),
+            NodeKind::Container,
+            Default::default(),
+            NodeEvents {
+                caps: EventCaps::CLICK,
+                on_click: Some(Rc::new(RefCell::new(Box::new(move |_, _| {
+                    *item_seen.borrow_mut() = true;
+                })))),
+                on_press: None,
+                on_release: None,
+                on_hover: None,
+            },
+            None,
+        );
+
+        layout
+            .nodes_state
+            .get_mut(&NodeName::other("cell"))
+            .unwrap()
+            .rect = tiny_skia::Rect::from_xywh(0.0, 0.0, 100.0, 100.0).unwrap();
+        layout
+            .nodes_state
+            .get_mut(&NodeName::other("text-child"))
+            .unwrap()
+            .rect = tiny_skia::Rect::from_xywh(0.0, 0.0, 100.0, 100.0).unwrap();
+        layout
+            .nodes_state
+            .get_mut(&NodeName::other("item"))
+            .unwrap()
+            .rect = tiny_skia::Rect::from_xywh(10.0, 10.0, 20.0, 20.0).unwrap();
+
+        layout.handle_event(AppEvent::PointerClick { x: 15.0, y: 15.0 });
+
+        assert!(*item_clicked.borrow());
+        assert!(!*cell_clicked.borrow());
+    }
 }

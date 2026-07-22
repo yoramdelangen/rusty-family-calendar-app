@@ -1,5 +1,6 @@
 mod calendar;
 mod components;
+mod event;
 mod icons;
 mod layout;
 mod node;

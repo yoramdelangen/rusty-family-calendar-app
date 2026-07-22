@@ -3,6 +3,7 @@ pub mod grid_builder;
 pub mod shape_builder;
 
 use cosmic_text::Align;
+use std::{cell::RefCell, rc::Rc};
 use taffy::{LengthPercentage, Rect};
 use tiny_skia::{Color, FillRule, Paint, Path, PathBuilder, Pixmap, Point, Stroke, Transform};
 use tracing::debug;
@@ -10,6 +11,7 @@ use tracing::debug;
 use crate::{
     THEME,
     icons::IconInfo,
+    layout::AppLayout,
     node::grid_builder::GridConfig,
     theme::font::{FONT, FontSize},
 };
@@ -18,6 +20,63 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static NEXT: AtomicU64 = AtomicU64::new(0);
 pub fn next_node_id() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EventCaps(u8);
+
+impl EventCaps {
+    pub const CLICK: Self = Self(1 << 0);
+    pub const PRESS: Self = Self(1 << 1);
+    pub const RELEASE: Self = Self(1 << 2);
+    pub const HOVER: Self = Self(1 << 3);
+
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    pub const fn all() -> Self {
+        Self(Self::CLICK.0 | Self::PRESS.0 | Self::RELEASE.0 | Self::HOVER.0)
+    }
+
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+}
+
+pub type EventHandler = Rc<RefCell<Box<dyn FnMut(&mut AppLayout, taffy::NodeId)>>>;
+
+#[derive(Clone)]
+pub struct NodeEvents {
+    pub caps: EventCaps,
+    pub on_click: Option<EventHandler>,
+    pub on_press: Option<EventHandler>,
+    pub on_release: Option<EventHandler>,
+    pub on_hover: Option<EventHandler>,
+}
+
+impl Default for NodeEvents {
+    fn default() -> Self {
+        Self {
+            caps: EventCaps::all(),
+            on_click: None,
+            on_press: None,
+            on_release: None,
+            on_hover: None,
+        }
+    }
+}
+
+impl core::fmt::Debug for NodeEvents {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("NodeEvents")
+            .field("caps", &self.caps)
+            .field("on_click", &self.on_click.is_some())
+            .field("on_press", &self.on_press.is_some())
+            .field("on_release", &self.on_release.is_some())
+            .field("on_hover", &self.on_hover.is_some())
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -156,6 +215,7 @@ pub struct Node {
     pub kind: NodeKind,
     pub name: NodeName,
     pub style: Style,
+    pub events: NodeEvents,
     pub children: Vec<taffy::NodeId>,
     pub state: State,
     pub offset: Point,
@@ -166,12 +226,19 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn new(node_id: taffy::NodeId, name: NodeName, kind: NodeKind, style: Style) -> Self {
+    pub fn new(
+        node_id: taffy::NodeId,
+        name: NodeName,
+        kind: NodeKind,
+        style: Style,
+        events: NodeEvents,
+    ) -> Self {
         Node {
             taffy_id: node_id,
             kind,
             name,
             style,
+            events,
             children: Vec::new(),
             state: State::default(),
             offset: Point::zero(),
@@ -499,6 +566,7 @@ impl Default for State {
 pub enum NodeName {
     Root,
     Header,
+    Clock,
     Footer,
     Content,
     Icon(String),
@@ -546,6 +614,7 @@ impl std::fmt::Display for NodeName {
         match self {
             NodeName::Root => f.write_str("ROOT"),
             NodeName::Header => f.write_str("HEADER"),
+            NodeName::Clock => f.write_str("CLOCK"),
             NodeName::Footer => f.write_str("FOOTER"),
             NodeName::Content => f.write_str("CONTENT"),
             NodeName::Icon(id) => write!(f, "ICON[{id}]"),

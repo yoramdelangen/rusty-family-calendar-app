@@ -1,13 +1,21 @@
-use std::{fs::OpenOptions, path::Path, thread, time::Duration};
+use std::{
+    fs::{OpenOptions, read_dir},
+    io::ErrorKind,
+    path::Path,
+    thread,
+    time::{Duration, Instant},
+};
 
 use drm::{
-    Device,
+    Device as DrmDevice,
     buffer::{Buffer as _, DrmFourcc},
     control::{self, Device as CtrlDevice, connector, crtc},
 };
+use evdev::{AbsoluteAxisCode, Device as EvdevDevice, EventSummary, KeyCode};
 use taffy::{Size, prelude::length};
 
 use crate::AppLayout;
+use crate::event::AppEvent;
 
 pub(crate) struct DrmWindowRenderer;
 
@@ -75,9 +83,66 @@ impl DrmWindowRenderer {
             Some(mode),
         )?;
 
+        let mut touch_devices = Self::open_touch_devices()?;
+        let mut next_tick = Instant::now() + Duration::from_secs(1);
+
         loop {
-            thread::sleep(Duration::from_secs(60));
+            let mut dirty = false;
+
+            for touch in &mut touch_devices {
+                dirty |= touch.poll(layout, width, height);
+            }
+
+            let now = Instant::now();
+            if now >= next_tick {
+                layout.handle_event(AppEvent::Tick);
+                dirty = true;
+                while now >= next_tick {
+                    next_tick += Duration::from_secs(1);
+                }
+            }
+
+            if dirty {
+                layout.render_layout(Size {
+                    width: length(width as f32),
+                    height: length(height as f32),
+                });
+
+                let mut frame = vec![0_u32; (width * height) as usize];
+                layout.draw(&mut frame, width, height);
+                Self::copy_frame_to_dumb_buffer(
+                    &frame,
+                    &mut mapping,
+                    width as usize,
+                    height as usize,
+                    pitch,
+                );
+            }
+
+            thread::sleep(Duration::from_millis(16));
         }
+    }
+
+    fn open_touch_devices() -> Result<Vec<TouchDevice>, Box<dyn std::error::Error>> {
+        let mut devices = Vec::new();
+
+        for entry in read_dir("/dev/input")? {
+            let entry = entry?;
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+
+            if !name.starts_with("event") {
+                continue;
+            }
+
+            if let Some(device) = TouchDevice::open(&path) {
+                devices.push(device);
+            }
+        }
+
+        Ok(devices)
     }
 
     fn select_encoder_and_crtc(
@@ -127,6 +192,148 @@ impl DrmWindowRenderer {
     }
 }
 
+struct TouchDevice {
+    device: EvdevDevice,
+    x_range: Option<AxisRange>,
+    y_range: Option<AxisRange>,
+    raw_x: Option<i32>,
+    raw_y: Option<i32>,
+    pressed: bool,
+}
+
+#[derive(Clone, Copy)]
+struct AxisRange {
+    min: i32,
+    max: i32,
+}
+
+impl TouchDevice {
+    fn open(path: impl AsRef<Path>) -> Option<Self> {
+        let mut device = EvdevDevice::open(path).ok()?;
+
+        if !Self::is_touchscreen(&device) {
+            return None;
+        }
+
+        device.set_nonblocking(true).ok()?;
+
+        let x_range = Self::axis_range(&device, AbsoluteAxisCode::ABS_X)
+            .or_else(|| Self::axis_range(&device, AbsoluteAxisCode::ABS_MT_POSITION_X));
+        let y_range = Self::axis_range(&device, AbsoluteAxisCode::ABS_Y)
+            .or_else(|| Self::axis_range(&device, AbsoluteAxisCode::ABS_MT_POSITION_Y));
+
+        Some(Self {
+            device,
+            x_range,
+            y_range,
+            raw_x: None,
+            raw_y: None,
+            pressed: false,
+        })
+    }
+
+    fn is_touchscreen(device: &EvdevDevice) -> bool {
+        let has_abs = device.supported_absolute_axes().is_some_and(|axes| {
+            axes.contains(AbsoluteAxisCode::ABS_X)
+                || axes.contains(AbsoluteAxisCode::ABS_Y)
+                || axes.contains(AbsoluteAxisCode::ABS_MT_POSITION_X)
+                || axes.contains(AbsoluteAxisCode::ABS_MT_POSITION_Y)
+        });
+
+        let has_touch = device
+            .supported_keys()
+            .is_some_and(|keys| keys.contains(KeyCode::BTN_TOUCH));
+
+        has_abs && has_touch
+    }
+
+    fn axis_range(device: &EvdevDevice, axis: AbsoluteAxisCode) -> Option<AxisRange> {
+        device.get_absinfo().ok()?.find_map(|(code, info)| {
+            (code == axis).then_some(AxisRange {
+                min: info.minimum(),
+                max: info.maximum(),
+            })
+        })
+    }
+
+    fn poll(&mut self, layout: &mut AppLayout, width: u32, height: u32) -> bool {
+        let mut dirty = false;
+
+        loop {
+            let events = match self.device.fetch_events() {
+                Ok(events) => events,
+                Err(err) if err.kind() == ErrorKind::WouldBlock => break,
+                Err(_) => break,
+            };
+
+            for event in events {
+                dirty |= self.handle_event(layout, event, width, height);
+            }
+        }
+
+        dirty
+    }
+
+    fn handle_event(
+        &mut self,
+        layout: &mut AppLayout,
+        event: evdev::InputEvent,
+        width: u32,
+        height: u32,
+    ) -> bool {
+        match event.destructure() {
+            EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_X, value)
+            | EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_MT_POSITION_X, value) => {
+                self.raw_x = Some(value);
+                if self.pressed {
+                    if let Some((x, y)) = self.position(width, height) {
+                        layout.handle_event(AppEvent::PointerMove { x, y });
+                    }
+                }
+                true
+            }
+            EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_Y, value)
+            | EventSummary::AbsoluteAxis(_, AbsoluteAxisCode::ABS_MT_POSITION_Y, value) => {
+                self.raw_y = Some(value);
+                if self.pressed {
+                    if let Some((x, y)) = self.position(width, height) {
+                        layout.handle_event(AppEvent::PointerMove { x, y });
+                    }
+                }
+                true
+            }
+            EventSummary::Key(_, KeyCode::BTN_TOUCH, value) if value > 0 => {
+                self.pressed = true;
+                if let Some((x, y)) = self.position(width, height) {
+                    layout.handle_event(AppEvent::PointerDown { x, y });
+                }
+                true
+            }
+            EventSummary::Key(_, KeyCode::BTN_TOUCH, value) if value == 0 => {
+                self.pressed = false;
+                if let Some((x, y)) = self.position(width, height) {
+                    layout.handle_event(AppEvent::PointerUp { x, y });
+                    layout.handle_event(AppEvent::PointerClick { x, y });
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn position(&self, width: u32, height: u32) -> Option<(f32, f32)> {
+        let x = self.scale(self.raw_x?, self.x_range?, width);
+        let y = self.scale(self.raw_y?, self.y_range?, height);
+        Some((x, y))
+    }
+
+    fn scale(&self, raw: i32, range: AxisRange, size: u32) -> f32 {
+        let span = (range.max - range.min).max(1) as f32;
+        let normalized = (raw - range.min).max(0) as f32 / span;
+        normalized.clamp(0.0, 1.0) * size as f32
+    }
+}
+
 struct Card(std::fs::File);
 
 impl Card {
@@ -166,5 +373,5 @@ impl std::os::fd::AsFd for Card {
     }
 }
 
-impl Device for Card {}
+impl DrmDevice for Card {}
 impl CtrlDevice for Card {}
