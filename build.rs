@@ -49,7 +49,10 @@ fn used_icons(dir: &Path) -> Vec<String> {
         .flat_map(|src| {
             scan_string_arg(&src, "icon(")
                 .into_iter()
+                .chain(scan_string_arg(&src, "ButtonContent::Icon("))
+                .into_iter()
                 .chain(scan_string_arg(&src, "IconInfo::new("))
+                .chain(scan_string_after(&src, "icon:"))
                 .chain(scan_string_in_call(&src, "set_icon_by_name("))
                 .collect::<Vec<_>>()
         })
@@ -113,6 +116,25 @@ fn scan_string_in_call(src: &str, call: &str) -> Vec<String> {
         }
 
         rest = &rest[end + 1..];
+    }
+
+    found
+}
+
+fn scan_string_after(src: &str, needle: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = src;
+
+    while let Some(pos) = rest.find(needle) {
+        rest = &rest[pos + needle.len()..];
+        let trimmed = rest.trim_start();
+        let Some(after_quote) = trimmed.strip_prefix('"') else {
+            continue;
+        };
+        let Some(end) = after_quote.find('"') else {
+            continue;
+        };
+        found.push(after_quote[..end].to_string());
     }
 
     found

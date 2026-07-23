@@ -1,12 +1,13 @@
 use std::sync::mpsc::Receiver;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use taffy::{Dimension, Size};
 
 use crate::{
     AppLayout,
     calendar::{CalendarChange, SyncStatus},
     event::AppEvent,
+    layout::LayoutAction,
     node::NodeName,
     theme::THEME,
 };
@@ -15,14 +16,18 @@ pub(crate) struct App {
     layout: AppLayout,
     sync_rx: Receiver<SyncStatus>,
     sync_footer: SyncFooterState,
+    week_offset: i64,
+    last_navigation_at: Option<DateTime<Utc>>,
 }
 
 impl App {
     pub(crate) fn new(sync_rx: Receiver<SyncStatus>) -> Self {
         Self {
-            layout: crate::build_app_layout(),
+            layout: crate::build_app_layout(0),
             sync_rx,
             sync_footer: SyncFooterState::new(),
+            week_offset: 0,
+            last_navigation_at: None,
         }
     }
 
@@ -32,8 +37,7 @@ impl App {
         while let Ok(status) = self.sync_rx.try_recv() {
             let rebuild = self.handle_sync_status(status);
             if rebuild {
-                self.layout = crate::build_app_layout();
-                self.apply_sync_footer();
+                self.rebuild_layout();
             }
             dirty = true;
         }
@@ -43,7 +47,9 @@ impl App {
 
     pub(crate) fn handle_event(&mut self, event: AppEvent) {
         self.layout.handle_event(event);
+        self.handle_layout_action();
         if matches!(event, AppEvent::Tick) {
+            self.reset_after_idle();
             self.apply_sync_footer();
         }
     }
@@ -132,6 +138,48 @@ impl App {
             NodeName::other(crate::SYNC_CHANGES_NODE),
             self.sync_footer.latest_changes.clone(),
         );
+    }
+
+    fn rebuild_layout(&mut self) {
+        self.layout = crate::build_app_layout(self.week_offset);
+        self.apply_sync_footer();
+    }
+
+    fn handle_layout_action(&mut self) {
+        let Some(action) = self.layout.take_action() else {
+            return;
+        };
+
+        match action {
+            LayoutAction::ShiftWeeks(delta) => {
+                self.week_offset += delta;
+                self.last_navigation_at = Some(Utc::now());
+                self.rebuild_layout();
+            }
+            LayoutAction::ResetWeeks => {
+                if self.week_offset == 0 {
+                    return;
+                }
+
+                self.week_offset = 0;
+                self.last_navigation_at = None;
+                self.rebuild_layout();
+            }
+        }
+    }
+
+    fn reset_after_idle(&mut self) {
+        let Some(last_navigation_at) = self.last_navigation_at else {
+            return;
+        };
+
+        if self.week_offset == 0 || Utc::now() - last_navigation_at < Duration::minutes(2) {
+            return;
+        }
+
+        self.week_offset = 0;
+        self.last_navigation_at = None;
+        self.rebuild_layout();
     }
 }
 

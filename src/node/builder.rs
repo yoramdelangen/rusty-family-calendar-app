@@ -1,4 +1,4 @@
-use cosmic_text::Align;
+use cosmic_text::{Align, Weight};
 use taffy::{
     Display, FlexDirection, NodeId, Rect,
     prelude::{auto, length, percent},
@@ -174,6 +174,11 @@ impl Builder {
         self
     }
 
+    pub fn rounded(mut self, radius: f32) -> Self {
+        self.style.border_radius = Rect::length(radius);
+        self
+    }
+
     pub fn px(mut self, size: f32) -> Self {
         self.style.layout.padding.left = length(size);
         self.style.layout.padding.right = length(size);
@@ -216,6 +221,15 @@ impl Builder {
 
     pub fn set_font_size(&mut self, fs: FontSize) {
         self.style.font_size = fs;
+    }
+
+    pub fn font_weight(mut self, weight: Weight) -> Self {
+        self.style.font_weight = weight;
+        self
+    }
+
+    pub fn bold(self) -> Self {
+        self.font_weight(Weight::BOLD)
     }
 
     // --- HELPER FN's

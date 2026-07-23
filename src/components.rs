@@ -1,5 +1,6 @@
+use cosmic_text::Align;
 use taffy::{
-    AlignItems, Display,
+    AlignItems, Display, FlexDirection, JustifyContent,
     prelude::{length, percent},
 };
 use tiny_skia::{Color, Point};
@@ -82,6 +83,79 @@ pub fn pill(content: impl Into<String>) -> Builder {
             }
         })
         .background(THEME.surface_raised)
+}
+
+pub enum ButtonContent {
+    Icon(&'static str),
+    Text(String),
+    IconText {
+        icon: &'static str,
+        text: String,
+        icon_position: IconPosition,
+    },
+}
+
+pub enum IconPosition {
+    Before,
+    After,
+}
+
+pub fn button(content: ButtonContent) -> Builder {
+    let mut kids = Vec::with_capacity(2);
+    let mut icon_only = false;
+
+    match content {
+        ButtonContent::Icon(icon_name) => {
+            icon_only = true;
+            kids.push(icon(icon_name).width(16.).height(16.));
+        }
+        ButtonContent::Text(label) => {
+            kids.push(text(label).text_align(Align::Center));
+        }
+        ButtonContent::IconText {
+            icon: icon_name,
+            text: label,
+            icon_position,
+        } => {
+            let icon = icon(icon_name).width(16.).height(16.);
+            let text = text(label).text_align(Align::Center).px(4.);
+
+            match icon_position {
+                IconPosition::Before => {
+                    kids.push(icon);
+                    kids.push(text);
+                }
+                IconPosition::After => {
+                    kids.push(text);
+                    kids.push(icon);
+                }
+            }
+        }
+    }
+
+    let button = Builder::new(NodeKind::Container, None)
+        .events(EventCaps::CLICK)
+        .width_auto()
+        .height_auto()
+        .rounded(999.)
+        .background(THEME.surface_raised)
+        .border_color(THEME.border)
+        .border_t(1.)
+        .border_b(1.)
+        .border_l(1.)
+        .border_r(1.)
+        .layout(|l| {
+            l.flex_direction = FlexDirection::Row;
+            l.align_items = Some(AlignItems::Center);
+            l.justify_content = Some(JustifyContent::Center);
+        })
+        .children(kids);
+
+    if icon_only {
+        button.width(36.).height(36.)
+    } else {
+        button.px(12.).py(8.)
+    }
 }
 
 #[cfg(test)]

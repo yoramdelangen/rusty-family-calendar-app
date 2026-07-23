@@ -59,10 +59,11 @@ impl FontTheme {
         &self,
         content: &str,
         fs: &FontSize,
+        weight: Weight,
         max_width: Option<f32>,
         ellipsis: bool,
     ) -> taffy::Size<f32> {
-        let attrs = default_attrs();
+        let attrs = attrs_for(weight);
         let metrics = Metrics::new(fs.font_size, fs.line_height);
         let mut system = self.system.lock().unwrap();
 
@@ -101,7 +102,7 @@ impl FontTheme {
     }
 
     pub fn draw_on_canvas(&self, canvas: &mut Pixmap, node: &Node, content: &str) {
-        let attrs = default_attrs();
+        let attrs = attrs_for(node.style.font_weight);
         let metrics = Metrics::new(
             node.style.font_size.font_size,
             node.style.font_size.line_height,
@@ -182,10 +183,10 @@ impl FontTheme {
     }
 }
 
-fn default_attrs() -> Attrs<'static> {
+fn attrs_for(weight: Weight) -> Attrs<'static> {
     Attrs::new()
         .family(Family::Name(DEFAULT_FONT_FAMILY))
-        .weight(Weight::LIGHT)
+        .weight(weight)
 }
 
 fn font_dirs() -> Vec<PathBuf> {
@@ -233,7 +234,13 @@ mod tests {
     fn measure_text_honors_max_width_and_rounds_up() {
         let fonts = FontTheme::new();
         let size = FontSize::new_calc(16.0, 1.5);
-        let measured = fonts.measure_text("a long enough line to wrap", &size, Some(40.0), false);
+        let measured = fonts.measure_text(
+            "a long enough line to wrap",
+            &size,
+            Weight::LIGHT,
+            Some(40.0),
+            false,
+        );
 
         assert!(measured.width <= 40.0);
         assert_eq!(measured.width.fract(), 0.0);

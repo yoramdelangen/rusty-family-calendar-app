@@ -7,6 +7,7 @@ use std::{
 use softbuffer::{Context, Surface};
 use taffy::{Size, prelude::length};
 use winit::dpi::PhysicalSize;
+#[cfg(target_os = "macos")]
 use winit::platform::macos::WindowAttributesExtMacOS;
 use winit::{
     application::ApplicationHandler,
@@ -62,11 +63,18 @@ impl ApplicationHandler for WinitWindowRenderer {
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
         if let StartCause::Init = cause {
+            #[cfg(target_os = "macos")]
             let window_attrs = Window::default_attributes()
                 .with_title("Rusty Calendar Pi")
                 .with_title_hidden(true)
                 .with_fullsize_content_view(true)
                 .with_titlebar_transparent(true)
+                .with_inner_size(PhysicalSize::new(1920, 1080))
+                .with_theme(Some(winit::window::Theme::Light));
+
+            #[cfg(not(target_os = "macos"))]
+            let window_attrs = Window::default_attributes()
+                .with_title("Rusty Calendar Pi")
                 .with_inner_size(PhysicalSize::new(1920, 1080))
                 .with_theme(Some(winit::window::Theme::Light));
 

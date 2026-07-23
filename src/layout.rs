@@ -19,6 +19,13 @@ pub(crate) struct AppLayout {
     root_node: NodeId,
     nodes: HashMap<NodeId, NodeName>,
     nodes_state: HashMap<NodeName, Node>,
+    pending_action: Option<LayoutAction>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LayoutAction {
+    ShiftWeeks(i64),
+    ResetWeeks,
 }
 
 impl AppLayout {
@@ -40,7 +47,16 @@ impl AppLayout {
             root_node: root,
             nodes: HashMap::new(),
             nodes_state: HashMap::new(),
+            pending_action: None,
         }
+    }
+
+    pub(crate) fn queue_action(&mut self, action: LayoutAction) {
+        self.pending_action = Some(action);
+    }
+
+    pub(crate) fn take_action(&mut self) -> Option<LayoutAction> {
+        self.pending_action.take()
     }
 
     pub fn create_node(
@@ -655,6 +671,7 @@ fn calculate_layout_measurement(
             let size = FONT.measure_text(
                 &txt_content.content,
                 &node.style.font_size,
+                node.style.font_weight,
                 max_width,
                 txt_content.ellipsis,
             );

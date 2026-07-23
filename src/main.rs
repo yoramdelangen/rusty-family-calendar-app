@@ -11,7 +11,7 @@ mod table;
 mod theme;
 
 use argh::FromArgs;
-use chrono::{DateTime, Datelike, Days, Local, NaiveDate, NaiveDateTime, Weekday};
+use chrono::{Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime};
 use cosmic_text::Align;
 use rusqlite::Connection;
 use std::{
@@ -24,11 +24,13 @@ use tracing::{debug, error, info, trace};
 use tracing_subscriber::EnvFilter;
 
 use crate::layout::AppLayout;
+use crate::layout::LayoutAction;
 use crate::node::builder::BobTheBuilder;
 use crate::theme::{THEME, font::FONT};
 use crate::{
-    components::{div, grid, icon, pill, text},
+    components::{ButtonContent, button, div, grid, icon, pill, text},
     node::builder::Builder,
+    node::{EventCaps, NodeKind},
 };
 
 pub(crate) const SYNC_ICON_NODE: &str = "sync-icon";
@@ -47,6 +49,18 @@ const FOOTER_PX: f32 = 16.0;
 
 #[cfg(not(target_os = "macos"))]
 const FOOTER_PX: f32 = 10.0;
+
+#[cfg(target_os = "macos")]
+const HEADER_LEFT_INSET: f32 = 146.0;
+
+#[cfg(not(target_os = "macos"))]
+const HEADER_LEFT_INSET: f32 = 0.0;
+
+#[cfg(target_os = "macos")]
+const HEADER_CONTENT_TOP_OFFSET: f32 = 6.0;
+
+#[cfg(not(target_os = "macos"))]
+const HEADER_CONTENT_TOP_OFFSET: f32 = 0.0;
 
 #[derive(FromArgs)]
 /// Rusty Calendar Pi
@@ -76,22 +90,74 @@ struct SyncArgs {
     calendar: Option<String>,
 }
 
-fn build_layout(layout: &mut AppLayout) -> (NodeId, NodeId, NodeId) {
+fn build_layout(layout: &mut AppLayout, visible_start: NaiveDate, week_offset: i64) -> (NodeId, NodeId, NodeId) {
+    let mut header_controls = Builder::new(NodeKind::Container, None)
+        .width_auto()
+        .events(EventCaps::empty())
+        .layout(|l| {
+            l.flex_direction = FlexDirection::Row;
+            l.align_items = Some(AlignItems::Center);
+            l.margin.left = length(HEADER_LEFT_INSET);
+            l.margin.top = length(HEADER_CONTENT_TOP_OFFSET);
+        })
+        .child(
+            text(header_month_label(visible_start))
+                .width(160.)
+                .font_size(FONT.xl.clone())
+                .bold()
+                .text_align(Align::Left),
+        )
+        .child(
+            button(ButtonContent::Icon("16/chevron--left"))
+                .width(36.)
+                .height(36.)
+                .rounded(18.)
+                .on_click(|layout, _| layout.queue_action(LayoutAction::ShiftWeeks(-2)))
+                .layout(|l| {
+                    l.margin.left = length(12.);
+                }),
+        )
+        .child(
+            button(ButtonContent::Icon("16/chevron--right"))
+                .width(36.)
+                .height(36.)
+                .rounded(18.)
+                .on_click(|layout, _| layout.queue_action(LayoutAction::ShiftWeeks(2)))
+                .layout(|l| {
+                    l.margin.left = length(8.);
+                }),
+        );
+
+    if week_offset != 0 {
+        header_controls = header_controls.child(
+            button(ButtonContent::Text("Today".to_owned()))
+                .on_click(|layout, _| layout.queue_action(LayoutAction::ResetWeeks))
+                .layout(|l| {
+                    l.margin.left = length(8.);
+                }),
+        );
+    }
+
     let header = div()
         .border_color(THEME.border)
         .name(node::NodeName::Header)
         .height(64.0)
+        .px(16.)
         .border_b(1.0)
         .layout(|l| {
             l.align_items = Some(AlignItems::Center);
-            l.justify_content = Some(JustifyContent::FlexEnd);
+            l.justify_content = Some(JustifyContent::SpaceBetween);
         })
+        .child(header_controls)
         .child(
             text(Local::now().format("%H:%M:%S").to_string())
                 .name(node::NodeName::Clock)
                 .width(96.)
                 .text_align(Align::Center)
-                .px(16.),
+                .px(16.)
+                .layout(|l| {
+                    l.margin.top = length(HEADER_CONTENT_TOP_OFFSET);
+                }),
         )
         .build(layout);
 
@@ -191,14 +257,15 @@ fn launch_app() {
     renderer::run(app::App::new(sync_rx));
 }
 
-pub(crate) fn build_app_layout() -> AppLayout {
+pub(crate) fn build_app_layout(week_offset: i64) -> AppLayout {
     let mut layout = AppLayout::new();
+    let visible_start = visible_start_for_offset(week_offset);
 
-    let (_header, content, _footer) = build_layout(&mut layout);
+    let (_header, content, _footer) = build_layout(&mut layout, visible_start, week_offset);
     let config = crate::calendar::read_config().expect("failed to load config");
     let items_by_date = load_calendar_items(&config).expect("failed to load calendar items");
 
-    let today = Local::now();
+    let today = Local::now().date_naive();
 
     let headers = get_weekdays();
     grid("calendar_weekday", CAL_COLS + 1, None)
@@ -218,14 +285,14 @@ pub(crate) fn build_app_layout() -> AppLayout {
         .parent_node(content)
         .build(&mut layout);
 
-    let mut weeknumbers: Vec<Builder> = get_weeknumbers(CAL_ROWS)
+    let mut weeknumbers: Vec<Builder> = get_weeknumbers(visible_start, CAL_ROWS)
         .iter()
         .map(|num| text(num.to_string()).font_size(FONT.sm.clone()))
         .collect();
 
     trace!(weeks = weeknumbers.len(), "week numbers prepared");
 
-    let mut dates = get_dates((CAL_COLS * CAL_ROWS) as u32).into_iter();
+    let mut dates = get_dates(visible_start, (CAL_COLS * CAL_ROWS) as u32).into_iter();
     grid("calendar", CAL_COLS + 1, Some(CAL_ROWS))
         .border_color(THEME.border)
         .height_full()
@@ -246,7 +313,7 @@ pub(crate) fn build_app_layout() -> AppLayout {
             }
 
             let date = dates.next().expect("Cannot pop a date");
-            let is_today = today.date_naive().eq(&date);
+            let is_today = today.eq(&date);
 
             if is_today {
                 kid.style.background_color = Some(subtle_today_background());
@@ -285,13 +352,11 @@ fn get_weekdays() -> Vec<String> {
 }
 
 /// Get week numbers for a num amount of weeks and return them in a vec.
-fn get_weeknumbers(num_of_weeks: usize) -> Vec<u32> {
-    let local = Local::now().naive_local();
-
+fn get_weeknumbers(begin: NaiveDate, num_of_weeks: usize) -> Vec<u32> {
     let mut weeks = Vec::with_capacity(num_of_weeks);
-    weeks.push(local.iso_week().week());
+    weeks.push(begin.iso_week().week());
     for i in 1..num_of_weeks {
-        if let Some(d) = local.checked_add_days(Days::new((i * 7) as u64)) {
+        if let Some(d) = begin.checked_add_days(Days::new((i * 7) as u64)) {
             weeks.push(d.iso_week().week());
         }
     }
@@ -299,11 +364,7 @@ fn get_weeknumbers(num_of_weeks: usize) -> Vec<u32> {
     weeks
 }
 
-fn get_dates(how_many: u32) -> Vec<NaiveDate> {
-    let local: DateTime<Local> = Local::now();
-    let week = local.iso_week().week();
-    let begin = NaiveDate::from_isoywd_opt(local.year(), week, Weekday::Mon).unwrap();
-
+fn get_dates(begin: NaiveDate, how_many: u32) -> Vec<NaiveDate> {
     let mut dates = Vec::with_capacity(how_many as usize);
     dates.push(begin);
     for i in 1..how_many {
@@ -312,6 +373,43 @@ fn get_dates(how_many: u32) -> Vec<NaiveDate> {
     }
 
     dates
+}
+
+fn visible_start_for_offset(week_offset: i64) -> NaiveDate {
+    let today = Local::now().date_naive();
+    let start = today - Duration::days(today.weekday().num_days_from_monday() as i64);
+    start
+        .checked_add_signed(Duration::days(week_offset * 7))
+        .expect("invalid visible start")
+}
+
+fn header_month_label(visible_start: NaiveDate) -> String {
+    let month = dutch_month_name(visible_start.month());
+    let mut chars = month.chars();
+    let month = match chars.next() {
+        Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+        None => month.to_owned(),
+    };
+
+    format!("{month} {}", visible_start.year())
+}
+
+fn dutch_month_name(month: u32) -> &'static str {
+    match month {
+        1 => "januari",
+        2 => "februari",
+        3 => "maart",
+        4 => "april",
+        5 => "mei",
+        6 => "juni",
+        7 => "juli",
+        8 => "augustus",
+        9 => "september",
+        10 => "oktober",
+        11 => "november",
+        12 => "december",
+        _ => unreachable!("invalid month"),
+    }
 }
 
 fn load_calendar_items(
@@ -488,5 +586,23 @@ mod tests {
     #[test]
     fn parses_profile_color() {
         assert_eq!(theme::parse_hex_color("#1e66f5"), Some(THEME.primary));
+    }
+
+    #[test]
+    fn visible_start_moves_by_whole_weeks() {
+        let today = Local::now().date_naive();
+        let start = visible_start_for_offset(0);
+
+        assert_eq!(start.weekday().num_days_from_monday(), 0);
+        assert!(start <= today);
+        assert_eq!(visible_start_for_offset(2) - start, Duration::days(14));
+        assert_eq!(start - visible_start_for_offset(-2), Duration::days(14));
+    }
+
+    #[test]
+    fn header_month_label_uses_dutch_name() {
+        let date = NaiveDate::from_ymd_opt(2026, 7, 1).unwrap();
+
+        assert_eq!(header_month_label(date), "Juli 2026");
     }
 }
