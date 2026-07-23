@@ -3,3 +3,6 @@ linker = "arm-unknown-linux-gnueabihf-gcc"
 
 [target.arm-unknown-linux-musleabihf]
 linker = "arm-linux-musleabihf-gcc"
+
+[env]
+CC_arm_unknown_linux_gnueabihf = "arm-unknown-linux-gnueabihf-gcc"
