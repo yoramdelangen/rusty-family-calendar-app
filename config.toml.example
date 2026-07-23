@@ -1,0 +1,11 @@
+# Rusty Calendar Pi
+# Profiles own the color.
+# Calendars live under each profile and point at sync URLs.
+
+log_level = "info"
+
+# Optional:
+# - set `pill = true` on a profile to make all of its calendars render as pills by default
+# - set `pill = true` or `pill = false` on a calendar to override the profile setting
+
+profile = []

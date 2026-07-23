@@ -61,6 +61,7 @@ pub(crate) fn profile_add() -> Result<(), Box<dyn Error>> {
     config.profile.push(ConfigProfile {
         name: name.clone(),
         color: Some(color),
+        pill: false,
         calendar: Vec::new(),
     });
     calendar::save_config(&config)?;

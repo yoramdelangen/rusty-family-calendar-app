@@ -20,13 +20,14 @@ use std::{
 };
 use taffy::{AlignItems, FlexDirection, JustifyContent, NodeId, prelude::length};
 use tiny_skia::Color;
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace};
+use tracing_subscriber::EnvFilter;
 
 use crate::layout::AppLayout;
 use crate::node::builder::BobTheBuilder;
-use crate::theme::THEME;
+use crate::theme::{THEME, font::FONT};
 use crate::{
-    components::{div, grid, icon, pill, text},
+    components::{div, grid, icon, text},
     node::builder::Builder,
 };
 
@@ -141,7 +142,7 @@ fn build_layout(layout: &mut AppLayout) -> (NodeId, NodeId, NodeId) {
                 }),
         )
         .child(
-            text(APP_VERSION)
+            text(footer_version_text())
                 .name(node::NodeName::other(VERSION_NODE))
                 .width_auto()
                 .text_color(THEME.text_muted)
@@ -156,19 +157,16 @@ const CAL_COLS: usize = 7;
 const CAL_ROWS: usize = 4;
 
 fn main() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
+    let cli: Cli = argh::from_env();
+    init_logging();
 
-    if let Err(err) = run() {
-        eprintln!("{err}");
+    if let Err(err) = run(cli) {
+        error!(error = %err, "application failed");
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
-    let cli: Cli = argh::from_env();
-
+fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
     match cli.command {
         Some(Command::Sync(args)) => {
             crate::calendar::sync(args.profile.as_deref(), args.calendar.as_deref())?
@@ -214,7 +212,7 @@ pub(crate) fn build_app_layout() -> AppLayout {
         .children(
             headers
                 .iter()
-                .map(|day| text(day).py(5.).border_color(THEME.border))
+                .map(|day| text(day).py(5.).font_size(FONT.sm.clone()).border_color(THEME.border))
                 .collect(),
         )
         .parent_node(content)
@@ -222,10 +220,10 @@ pub(crate) fn build_app_layout() -> AppLayout {
 
     let mut weeknumbers: Vec<Builder> = get_weeknumbers(CAL_ROWS)
         .iter()
-        .map(|num| text(num.to_string()))
+        .map(|num| text(num.to_string()).font_size(FONT.sm.clone()))
         .collect();
 
-    println!("{:?}", weeknumbers.len());
+    trace!(weeks = weeknumbers.len(), "week numbers prepared");
 
     let mut dates = get_dates((CAL_COLS * CAL_ROWS) as u32).into_iter();
     grid("calendar", CAL_COLS + 1, Some(CAL_ROWS))
@@ -248,10 +246,11 @@ pub(crate) fn build_app_layout() -> AppLayout {
             }
 
             let date = dates.next().expect("Cannot pop a date");
+            let is_today = today.date_naive().eq(&date);
 
-            // if today.date_naive().eq(&date) {
-            //     println!("TODAY IS THE DAY {}", date);
-            // }
+            if is_today {
+                kid.style.background_color = Some(subtle_today_background());
+            }
 
             let label = format!("calendar-cell_{}", date).to_owned();
             kid.add_child(
@@ -261,11 +260,7 @@ pub(crate) fn build_app_layout() -> AppLayout {
                         l.align_items = Some(AlignItems::Center);
                         l.justify_content = Some(JustifyContent::Center);
                     })
-                    .child(if today.date_naive().eq(&date) {
-                        pill(format!("{}", date.day())).background(THEME.warning)
-                    } else {
-                        text(format!("{}", date.day())).py(5.)
-                    })
+                    .child(text(format!("{}", date.day())).py(5.).font_size(FONT.sm.clone()))
                     .name(node::NodeName::other(label)),
             );
 
@@ -324,7 +319,7 @@ fn load_calendar_items(
 ) -> Result<BTreeMap<NaiveDate, Vec<CalendarItem>>, Box<dyn Error>> {
     let mut items_by_date = BTreeMap::new();
     let db_path = crate::calendar::db_path();
-    let calendar_colors: HashMap<String, Color> = config
+    let calendar_style: HashMap<String, CalendarItemStyle> = config
         .profile
         .iter()
         .flat_map(|profile| {
@@ -339,9 +334,10 @@ fn load_calendar_items(
                     .as_deref()
                     .and_then(theme::parse_hex_color)
                     .unwrap_or(profile_color);
+                let pill = calendar.pill.unwrap_or(profile.pill);
                 (
                     crate::calendar::calendar_id_from(&profile.name, &calendar.url).to_string(),
-                    color,
+                    CalendarItemStyle { color, pill },
                 )
             })
         })
@@ -371,10 +367,13 @@ fn load_calendar_items(
         let calendar_id: String = row.get(0)?;
         let title: String = row.get(1)?;
         let start_at = parse_calendar_datetime(&row.get::<_, String>(2)?)?;
-        let accent = calendar_colors
+        let style = calendar_style
             .get(&calendar_id)
             .copied()
-            .unwrap_or(THEME.primary);
+            .unwrap_or(CalendarItemStyle {
+                color: THEME.primary,
+                pill: false,
+            });
 
         items_by_date
             .entry(start_at.date())
@@ -382,7 +381,8 @@ fn load_calendar_items(
             .push(CalendarItem {
                 title,
                 start_at,
-                accent,
+                accent: style.color,
+                pill: style.pill,
             });
     }
 
@@ -394,37 +394,48 @@ fn render_calendar_item(item: &CalendarItem) -> crate::node::builder::Builder {
     let on_accent = readable_on(accent);
     let time = item.start_at.format("%H:%M").to_string();
 
-    println!("Item {:?}", item);
+    trace!(title = %item.title, start_at = %item.start_at, "render calendar item");
 
-    div()
-        .width_full()
-        .pt(2.)
-        .pb(6.)
-        .px(4.)
-        .rounded_xl()
-        .background(accent)
-        .layout(|l| {
-            l.flex_direction = FlexDirection::Row;
-            l.align_items = Some(AlignItems::Center);
-            l.margin.top = length(4.);
-        })
-        .child(
-            text(time)
-                .width(56.)
-                .text_color(on_accent)
-                .text_align(Align::Left),
-        )
-        .child(
-            text(item.title.clone())
-                .width(0.)
-                .layout(|l| {
-                    l.flex_grow = 1.0;
-                    l.flex_shrink = 1.0;
-                })
-                .ellipsis()
-                .text_color(on_accent)
-                .text_align(Align::Left),
-        )
+    let mut row = div().width_full().layout(|l| {
+        l.flex_direction = FlexDirection::Row;
+        l.align_items = Some(AlignItems::Center);
+        l.margin.top = length(4.);
+    });
+
+    if item.pill {
+        row = row.pt(3.).pb(7.).px(6.).rounded_xl().background(accent);
+    }
+
+    row.child(
+        text(time)
+            .width(50.)
+            .font_size(FONT.sm.clone())
+            .text_color(if item.pill { on_accent } else { accent })
+            .text_align(Align::Left),
+    )
+    .child(
+        text(item.title.clone())
+            .width(0.)
+            .font_size(FONT.sm.clone())
+            .layout(|l| {
+                l.flex_grow = 1.0;
+                l.flex_shrink = 1.0;
+            })
+            .ellipsis()
+            .text_color(if item.pill { on_accent } else { THEME.text })
+            .text_align(Align::Left),
+    )
+}
+
+fn init_logging() {
+    let filter = EnvFilter::try_new(crate::calendar::configured_log_level())
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+}
+
+fn footer_version_text() -> String {
+    format!("{APP_VERSION} {}", crate::calendar::configured_log_level())
 }
 
 fn parse_calendar_datetime(value: &str) -> Result<NaiveDateTime, chrono::ParseError> {
@@ -444,11 +455,23 @@ fn readable_on(color: Color) -> Color {
     }
 }
 
+fn subtle_today_background() -> Color {
+    let c = THEME.primary.to_color_u8();
+    Color::from_rgba8(c.red(), c.green(), c.blue(), 24)
+}
+
 #[derive(Clone, Debug)]
 struct CalendarItem {
     title: String,
     start_at: NaiveDateTime,
     accent: Color,
+    pill: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CalendarItemStyle {
+    color: Color,
+    pill: bool,
 }
 
 #[cfg(test)]

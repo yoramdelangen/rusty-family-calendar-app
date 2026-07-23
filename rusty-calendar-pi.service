@@ -1,0 +1,20 @@
+[Unit]
+Description=Rusty Calendar Pi
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=rusty-calendar-pi
+Group=rusty-calendar-pi
+SupplementaryGroups=video render input
+EnvironmentFile=-/etc/default/rusty-calendar-pi
+WorkingDirectory=/var/lib/rusty-calendar-pi
+ExecStart=/usr/local/bin/rusty-calendar-pi
+Restart=on-failure
+RestartSec=5
+StateDirectory=rusty-calendar-pi
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

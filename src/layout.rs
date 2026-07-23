@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use chrono::Local;
 use taffy::{FlexDirection, NodeId, TaffyTree, prelude::*};
 use tiny_skia::{Color, Point};
-use tracing::{debug, info_span, trace};
+use tracing::{debug, info_span, trace, warn};
 
 use crate::{
     event::AppEvent,
@@ -71,10 +71,7 @@ impl AppLayout {
 
         // warning if the node-name already exists
         if self.nodes_state.contains_key(&node.name) {
-            println!(
-                "WARN: there is already a node with name {} in the list",
-                node.name
-            );
+            warn!(name = %node.name, "duplicate node name registered");
         }
 
         self.nodes.insert(node_id, node.name.clone());

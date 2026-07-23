@@ -2,6 +2,7 @@ pub mod font;
 
 use once_cell::sync::Lazy;
 use tiny_skia::Color;
+use tracing::trace;
 
 pub(crate) static THEME: Lazy<Theme> = Lazy::new(|| {
     let base16_light = Base16 {
@@ -23,7 +24,7 @@ pub(crate) static THEME: Lazy<Theme> = Lazy::new(|| {
         base0f: hex(0xdd7878),
     };
 
-    println!("Base05 color = {:?}", hex(0x4c4f69));
+    trace!("theme initialized");
     Theme::from_base16(base16_light)
 });
 

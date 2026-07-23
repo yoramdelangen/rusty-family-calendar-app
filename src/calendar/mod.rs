@@ -3,6 +3,7 @@ use std::{
     error::Error,
     fs,
     io::{self, Write},
+    panic,
     path::PathBuf,
     sync::mpsc::{self, Receiver, Sender},
     thread,
@@ -17,6 +18,7 @@ use calcard::{
 use chrono::{DateTime, Datelike, NaiveDateTime, Utc};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 #[allow(unused)]
@@ -100,6 +102,8 @@ pub(crate) struct ConfigProfile {
     #[serde(default)]
     pub(crate) color: Option<String>,
     #[serde(default)]
+    pub(crate) pill: bool,
+    #[serde(default)]
     pub(crate) calendar: Vec<ConfigCalendar>,
 }
 
@@ -112,10 +116,14 @@ pub(crate) struct ConfigCalendar {
     pub(crate) url: String,
     #[serde(default)]
     pub(crate) color: Option<String>,
+    #[serde(default)]
+    pub(crate) pill: Option<bool>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub(crate) struct Config {
+    #[serde(default = "default_log_level")]
+    pub(crate) log_level: String,
     pub(crate) profile: Vec<ConfigProfile>,
 }
 
@@ -153,15 +161,15 @@ pub(crate) fn sync(
         synced_calendars += 1;
         synced_items += result.items.len();
 
-        println!(
-            "synced profile={} calendar={} items={}",
-            profile.name,
-            calendar.label,
-            result.items.len()
+        info!(
+            profile = %profile.name,
+            calendar = %calendar.label,
+            items = result.items.len(),
+            "calendar synced"
         );
     }
 
-    println!("done calendars={} items={}", synced_calendars, synced_items);
+    info!(calendars = synced_calendars, items = synced_items, "sync finished");
     Ok(())
 }
 
@@ -169,11 +177,19 @@ pub(crate) fn start_sync_worker() -> Receiver<SyncStatus> {
     let (tx, rx) = mpsc::channel();
 
     thread::spawn(move || {
-        if let Err(err) = sync_worker(tx.clone()) {
+        let result = panic::catch_unwind(|| sync_worker(tx.clone()));
+        let failure = match result {
+            Ok(Ok(())) => None,
+            Ok(Err(err)) => Some(err.to_string()),
+            Err(payload) => Some(panic_message(payload)),
+        };
+
+        if let Some(error) = failure {
             let next_sync_at = Utc::now() + chrono::Duration::seconds(MIN_SYNC_INTERVAL_SECONDS);
+            error!(%error, "sync worker stopped");
             let _ = tx.send(SyncStatus::Failed {
                 calendar: "sync".to_owned(),
-                error: err.to_string(),
+                error,
                 next_sync_at,
             });
         }
@@ -194,8 +210,13 @@ fn sync_worker(tx: Sender<SyncStatus>) -> Result<(), Box<dyn Error>> {
         .collect::<Vec<_>>();
 
     if calendars.is_empty() {
-        return Ok(());
+        return Err(other_error(format!(
+            "no calendars configured in {}",
+            config_path().display()
+        )));
     }
+
+    info!(calendars = calendars.len(), "sync worker started");
 
     loop {
         let now = Utc::now();
@@ -221,6 +242,11 @@ fn sync_worker(tx: Sender<SyncStatus>) -> Result<(), Box<dyn Error>> {
                     }
                 }
                 Err(err) => {
+                    warn!(
+                        calendar = %calendars[index].calendar.label,
+                        error = %err,
+                        "calendar sync failed"
+                    );
                     calendars[index].next_sync_at =
                         Utc::now() + chrono::Duration::seconds(MIN_SYNC_INTERVAL_SECONDS);
                     SyncStatus::Failed {
@@ -609,6 +635,7 @@ pub(crate) fn calendar_add() -> Result<(), Box<dyn Error>> {
         cal_type,
         url: url.clone(),
         color: None,
+        pill: None,
     });
     save_config(&config)?;
 
@@ -624,7 +651,21 @@ pub(crate) fn read_config() -> Result<Config, Box<dyn Error>> {
         save_config(&config)?;
     }
 
+    if config.log_level.trim().is_empty() {
+        config.log_level = default_log_level();
+        save_config(&config)?;
+    }
+
     Ok(config)
+}
+
+pub(crate) fn configured_log_level() -> String {
+    fs::read_to_string(config_path())
+        .ok()
+        .and_then(|contents| toml::from_str::<Config>(&contents).ok())
+        .map(|config| config.log_level)
+        .filter(|level| !level.trim().is_empty())
+        .unwrap_or_else(default_log_level)
 }
 
 pub(crate) fn save_config(config: &Config) -> Result<(), Box<dyn Error>> {
@@ -674,8 +715,8 @@ fn ensure_config_file() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    fs::write(path, DEFAULT_CONFIG)?;
-    println!("created config.toml");
+    fs::write(&path, DEFAULT_CONFIG)?;
+    info!(path = %path.display(), "created config file");
     Ok(())
 }
 
@@ -696,8 +737,14 @@ const DEFAULT_CONFIG: &str = r#"# Rusty Calendar Pi
 # Profiles own the color.
 # Calendars live under each profile and point at sync URLs.
 
+log_level = "info"
+
 profile = []
 "#;
+
+fn default_log_level() -> String {
+    "info".to_owned()
+}
 
 pub(crate) fn db_path() -> PathBuf {
     let mut path = data_dir();
@@ -706,11 +753,13 @@ pub(crate) fn db_path() -> PathBuf {
 }
 
 fn config_path() -> PathBuf {
-    storage_dir().join("config.toml")
+    config_dir().join("config.toml")
 }
 
 fn data_dir() -> PathBuf {
-    storage_dir()
+    std::env::var_os("RUSTY_CALENDAR_PI_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(default_storage_dir)
 }
 
 fn home_dir() -> PathBuf {
@@ -719,7 +768,13 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn storage_dir() -> PathBuf {
+fn config_dir() -> PathBuf {
+    std::env::var_os("RUSTY_CALENDAR_PI_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(default_storage_dir)
+}
+
+fn default_storage_dir() -> PathBuf {
     if cfg!(debug_assertions) {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
     } else {
@@ -727,6 +782,18 @@ fn storage_dir() -> PathBuf {
         path.push(".config/rusty-calendar-pi");
         path
     }
+}
+
+fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_owned();
+    }
+
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+
+    "sync worker panicked".to_owned()
 }
 
 fn prompt_profile_index(profiles: &[ConfigProfile]) -> Result<usize, Box<dyn Error>> {
@@ -1145,7 +1212,7 @@ fn get_property_value_by_name(item: &ICalendarComponent, name: ICalendarProperty
                 return "".to_owned();
             }
 
-            dbg!(item);
+            debug!(?item, property = ?name, "calendar property missing");
             todo!("Entry item \"{:?}\" by name not found!", name)
         }
     }
@@ -1304,27 +1371,32 @@ END:VCALENDAR";
     #[test]
     fn selects_all_calendars_by_default() {
         let config = Config {
+            log_level: default_log_level(),
             profile: vec![
                 ConfigProfile {
                     name: "work".to_owned(),
                     color: None,
+                    pill: false,
                     calendar: vec![ConfigCalendar {
                         label: "primary".to_owned(),
                         account: "a".to_owned(),
                         cal_type: CalendarType::ICS,
                         url: "https://a".to_owned(),
                         color: None,
+                        pill: None,
                     }],
                 },
                 ConfigProfile {
                     name: "home".to_owned(),
                     color: None,
+                    pill: false,
                     calendar: vec![ConfigCalendar {
                         label: "shared".to_owned(),
                         account: "b".to_owned(),
                         cal_type: CalendarType::Gmail,
                         url: "https://b".to_owned(),
                         color: None,
+                        pill: None,
                     }],
                 },
             ],

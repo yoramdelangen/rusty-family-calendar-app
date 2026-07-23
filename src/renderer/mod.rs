@@ -14,6 +14,7 @@ pub(crate) mod drm;
 pub(crate) mod winit;
 
 use crate::app::App;
+use tracing::info;
 
 #[cfg(all(
     target_os = "linux",
@@ -22,7 +23,7 @@ use crate::app::App;
     any(target_env = "gnu", target_env = "musl")
 ))]
 pub(crate) fn run(app: App) {
-    println!("Using DRM window renderer");
+    info!("using DRM renderer");
     drm::DrmWindowRenderer::run(app);
 }
 
@@ -33,6 +34,6 @@ pub(crate) fn run(app: App) {
     any(target_env = "gnu", target_env = "musl")
 )))]
 pub(crate) fn run(app: App) {
-    println!("Using winit window renderer");
+    info!("using winit renderer");
     winit::WinitWindowRenderer::run(app);
 }

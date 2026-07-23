@@ -1,7 +1,8 @@
 use std::{path::PathBuf, sync::Mutex};
 
 use cosmic_text::{
-    Attrs, Buffer, Ellipsize, EllipsizeHeightLimit, FontSystem, Metrics, Shaping, SwashCache, Wrap,
+    Attrs, Buffer, Ellipsize, EllipsizeHeightLimit, Family, FontSystem, Metrics, Shaping,
+    SwashCache, Weight, Wrap,
 };
 use once_cell::sync::Lazy;
 use taffy::CoreStyle;
@@ -9,6 +10,8 @@ use tiny_skia::{Paint, Pixmap, Transform};
 use tracing::debug;
 
 use crate::node::Node;
+
+const DEFAULT_FONT_FAMILY: &str = "Zed Mono";
 
 pub(crate) static FONT: Lazy<FontTheme> = Lazy::new(FontTheme::new);
 
@@ -59,7 +62,7 @@ impl FontTheme {
         max_width: Option<f32>,
         ellipsis: bool,
     ) -> taffy::Size<f32> {
-        let attrs = Attrs::new();
+        let attrs = default_attrs();
         let metrics = Metrics::new(fs.font_size, fs.line_height);
         let mut system = self.system.lock().unwrap();
 
@@ -98,7 +101,7 @@ impl FontTheme {
     }
 
     pub fn draw_on_canvas(&self, canvas: &mut Pixmap, node: &Node, content: &str) {
-        let attrs = Attrs::new();
+        let attrs = default_attrs();
         let metrics = Metrics::new(
             node.style.font_size.font_size,
             node.style.font_size.line_height,
@@ -179,6 +182,12 @@ impl FontTheme {
     }
 }
 
+fn default_attrs() -> Attrs<'static> {
+    Attrs::new()
+        .family(Family::Name(DEFAULT_FONT_FAMILY))
+        .weight(Weight::LIGHT)
+}
+
 fn font_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
 
@@ -186,8 +195,12 @@ fn font_dirs() -> Vec<PathBuf> {
         dirs.push(PathBuf::from(path));
     }
 
+    if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
+        dirs.push(PathBuf::from(data_home).join("rusty-calendar-pi/fonts"));
+    }
+
     if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(PathBuf::from(home).join(".config/rusty-calendar-pi/fonts"));
+        dirs.push(PathBuf::from(home).join(".local/share/rusty-calendar-pi/fonts"));
     }
 
     dirs.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/fonts"));

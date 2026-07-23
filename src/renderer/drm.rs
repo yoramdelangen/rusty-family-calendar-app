@@ -13,6 +13,7 @@ use drm::{
 };
 use evdev::{AbsoluteAxisCode, Device as EvdevDevice, EventSummary, KeyCode};
 use taffy::{Size, prelude::length};
+use tracing::info;
 
 use crate::app::App;
 use crate::event::AppEvent;
@@ -49,10 +50,7 @@ impl DrmWindowRenderer {
         let (width, height) = mode.size();
         let (width, height) = (width as u32, height as u32);
 
-        println!(
-            "DRM target: connector={} encoder={:?} crtc={:?} mode={}x{}",
-            connector, encoder, crtc, width, height
-        );
+        info!(?connector, ?encoder, ?crtc, width, height, "DRM target selected");
 
         app.render_layout(Size {
             width: length(width as f32),
@@ -260,8 +258,8 @@ impl TouchDevice {
         let mut dirty = false;
 
         loop {
-            let events = match self.device.fetch_events() {
-                Ok(events) => events,
+            let events: Vec<_> = match self.device.fetch_events() {
+                Ok(events) => events.collect(),
                 Err(err) if err.kind() == ErrorKind::WouldBlock => break,
                 Err(_) => break,
             };
