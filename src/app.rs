@@ -104,7 +104,7 @@ impl App {
         let color = if self.sync_footer.syncing {
             THEME.success
         } else {
-            THEME.text_muted
+            THEME.text
         };
         let status = if self.sync_footer.syncing {
             "sync in progress".to_owned()

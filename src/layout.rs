@@ -416,16 +416,14 @@ impl AppLayout {
                 };
 
                 // we basically need to make pills display: inline-block
-                let target_size = if matches!(
-                    &node_state.kind,
-                    NodeKind::Text(txt_content) if txt_content.is_pill
-                ) {
-                    Size {
-                        width: node.content_size.width + node.padding.horizontal_axis_sum(),
-                        height: node.content_size.height + node.padding.vertical_axis_sum(),
+                let target_size = match &node_state.kind {
+                    NodeKind::Text(txt_content) if txt_content.is_pill && !txt_content.ellipsis => {
+                        Size {
+                            width: node.content_size.width + node.padding.horizontal_axis_sum(),
+                            height: node.content_size.height + node.padding.vertical_axis_sum(),
+                        }
                     }
-                } else {
-                    node.size
+                    _ => node.size,
                 };
 
                 node_state.rect = tiny_skia::Rect::from_xywh(
@@ -638,8 +636,15 @@ fn calculate_layout_measurement(
         NodeKind::Text(txt_content) => {
             // get max available with
             let max_width = if txt_content.is_pill {
-                // ponytail: pills stay single-line; if wrapping is ever needed, re-enable width capping here.
-                None
+                if txt_content.ellipsis {
+                    match available_space.width {
+                        AvailableSpace::Definite(w) => Some(w),
+                        _ => None,
+                    }
+                } else {
+                    // ponytail: pills stay single-line; if wrapping is ever needed, re-enable width capping here.
+                    None
+                }
             } else {
                 match available_space.width {
                     AvailableSpace::Definite(w) => Some(w),

@@ -27,7 +27,7 @@ use crate::layout::AppLayout;
 use crate::node::builder::BobTheBuilder;
 use crate::theme::{THEME, font::FONT};
 use crate::{
-    components::{div, grid, icon, text},
+    components::{div, grid, icon, pill, text},
     node::builder::Builder,
 };
 
@@ -121,20 +121,20 @@ fn build_layout(layout: &mut AppLayout) -> (NodeId, NodeId, NodeId) {
                 .name(node::NodeName::other(SYNC_ICON_NODE))
                 .width(18.)
                 .height(18.)
-                .text_color(THEME.text_muted)
+                .text_color(THEME.text)
                 .px(5.),
         )
         .child(
             text("next sync pending")
                 .name(node::NodeName::other(SYNC_STATUS_NODE))
                 .width(180.)
-                .text_color(THEME.text_muted),
+                .text_color(THEME.text),
         )
         .child(
             text("no sync changes yet")
                 .name(node::NodeName::other(SYNC_CHANGES_NODE))
                 .width(0.)
-                .text_color(THEME.text_muted)
+                .text_color(THEME.text)
                 .ellipsis()
                 .layout(|l| {
                     l.flex_grow = 1.0;
@@ -145,7 +145,7 @@ fn build_layout(layout: &mut AppLayout) -> (NodeId, NodeId, NodeId) {
             text(footer_version_text())
                 .name(node::NodeName::other(VERSION_NODE))
                 .width_auto()
-                .text_color(THEME.text_muted)
+                .text_color(THEME.text)
                 .text_align(Align::Right),
         )
         .build(layout);
@@ -396,21 +396,28 @@ fn render_calendar_item(item: &CalendarItem) -> crate::node::builder::Builder {
 
     trace!(title = %item.title, start_at = %item.start_at, "render calendar item");
 
-    let mut row = div().width_full().layout(|l| {
+    if item.pill {
+        return pill(format!("{time}  {}", item.title))
+            .width_full()
+            .font_size(FONT.sm.clone())
+            .text_color(on_accent)
+            .background(accent)
+            .ellipsis()
+            .layout(|l| {
+                l.margin.top = length(4.);
+            });
+    }
+
+    div().width_full().layout(|l| {
         l.flex_direction = FlexDirection::Row;
         l.align_items = Some(AlignItems::Center);
         l.margin.top = length(4.);
-    });
-
-    if item.pill {
-        row = row.pt(3.).pb(7.).px(6.).rounded_xl().background(accent);
-    }
-
-    row.child(
+    })
+    .child(
         text(time)
             .width(50.)
             .font_size(FONT.sm.clone())
-            .text_color(if item.pill { on_accent } else { accent })
+            .text_color(accent)
             .text_align(Align::Left),
     )
     .child(
@@ -422,7 +429,7 @@ fn render_calendar_item(item: &CalendarItem) -> crate::node::builder::Builder {
                 l.flex_shrink = 1.0;
             })
             .ellipsis()
-            .text_color(if item.pill { on_accent } else { THEME.text })
+            .text_color(THEME.text)
             .text_align(Align::Left),
     )
 }
