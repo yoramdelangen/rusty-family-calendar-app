@@ -90,7 +90,11 @@ struct SyncArgs {
     calendar: Option<String>,
 }
 
-fn build_layout(layout: &mut AppLayout, visible_start: NaiveDate, week_offset: i64) -> (NodeId, NodeId, NodeId) {
+fn build_layout(
+    layout: &mut AppLayout,
+    visible_start: NaiveDate,
+    week_offset: i64,
+) -> (NodeId, NodeId, NodeId) {
     let mut header_controls = Builder::new(NodeKind::Container, None)
         .width_auto()
         .events(EventCaps::empty())
@@ -279,7 +283,12 @@ pub(crate) fn build_app_layout(week_offset: i64) -> AppLayout {
         .children(
             headers
                 .iter()
-                .map(|day| text(day).py(5.).font_size(FONT.sm.clone()).border_color(THEME.border))
+                .map(|day| {
+                    text(day)
+                        .py(5.)
+                        .font_size(FONT.sm.clone())
+                        .border_color(THEME.border)
+                })
                 .collect(),
         )
         .parent_node(content)
@@ -327,7 +336,11 @@ pub(crate) fn build_app_layout(week_offset: i64) -> AppLayout {
                         l.align_items = Some(AlignItems::Center);
                         l.justify_content = Some(JustifyContent::Center);
                     })
-                    .child(text(format!("{}", date.day())).py(5.).font_size(FONT.sm.clone()))
+                    .child(
+                        text(format!("{}", date.day()))
+                            .py(5.)
+                            .font_size(FONT.sm.clone()),
+                    )
                     .name(node::NodeName::other(label)),
             );
 
@@ -506,30 +519,33 @@ fn render_calendar_item(item: &CalendarItem) -> crate::node::builder::Builder {
             });
     }
 
-    div().width_full().layout(|l| {
-        l.flex_direction = FlexDirection::Row;
-        l.align_items = Some(AlignItems::Center);
-        l.margin.top = length(4.);
-    })
-    .child(
-        text(time)
-            .width(50.)
-            .font_size(FONT.sm.clone())
-            .text_color(accent)
-            .text_align(Align::Left),
-    )
-    .child(
-        text(item.title.clone())
-            .width(0.)
-            .font_size(FONT.sm.clone())
-            .layout(|l| {
-                l.flex_grow = 1.0;
-                l.flex_shrink = 1.0;
-            })
-            .ellipsis()
-            .text_color(THEME.text)
-            .text_align(Align::Left),
-    )
+    div()
+        .width_full()
+        .px(4.)
+        .layout(|l| {
+            l.flex_direction = FlexDirection::Row;
+            l.align_items = Some(AlignItems::Center);
+            l.margin.top = length(4.);
+        })
+        .child(
+            text(time)
+                .width(50.)
+                .font_size(FONT.sm.clone())
+                .text_color(accent)
+                .text_align(Align::Left),
+        )
+        .child(
+            text(item.title.clone())
+                .width(0.)
+                .font_size(FONT.sm.clone())
+                .layout(|l| {
+                    l.flex_grow = 1.0;
+                    l.flex_shrink = 1.0;
+                })
+                .ellipsis()
+                .text_color(accent)
+                .text_align(Align::Left),
+        )
 }
 
 fn init_logging() {
