@@ -5,7 +5,7 @@ use taffy::{
 };
 use tiny_skia::Color;
 
-use crate::{layout::AppLayout, node::NodeName};
+use crate::{layout::AppLayout, node::NodeName, theme::font::FontSize};
 
 use super::{EventCaps, NodeEvents, NodeKind, Style};
 
@@ -209,14 +209,14 @@ impl Builder {
         self
     }
 
-    // // --- FONT HELPERS
-    // pub fn font_size(mut self, fs: FontSize) -> Self {
-    //     self.style.font_size = fs;
-    //     self
-    // }
-    // pub fn set_font_size(&mut self, fs: FontSize) {
-    //     self.style.font_size = fs;
-    // }
+    pub fn font_size(mut self, fs: FontSize) -> Self {
+        self.style.font_size = fs;
+        self
+    }
+
+    pub fn set_font_size(&mut self, fs: FontSize) {
+        self.style.font_size = fs;
+    }
 
     // --- HELPER FN's
     pub fn layout(mut self, f: impl FnOnce(&mut taffy::Style)) -> Self {

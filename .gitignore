@@ -1,3 +1,7 @@
 target/
 .DS_Store
 config.toml
+assets/fonts/*
+!assets/fonts/.gitkeep
+!assets/fonts/README.md
+calendar.sqlite
