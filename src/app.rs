@@ -1,4 +1,8 @@
-use std::sync::mpsc::Receiver;
+use std::{
+    net::{SocketAddr, TcpStream},
+    sync::mpsc::Receiver,
+    time::{Duration as StdDuration, Instant},
+};
 
 use chrono::{DateTime, Duration, Utc};
 use taffy::{Dimension, Size};
@@ -16,6 +20,7 @@ pub(crate) struct App {
     layout: AppLayout,
     sync_rx: Receiver<SyncStatus>,
     sync_footer: SyncFooterState,
+    network_status: NetworkStatusState,
     week_offset: i64,
     last_navigation_at: Option<DateTime<Utc>>,
 }
@@ -26,6 +31,7 @@ impl App {
             layout: crate::build_app_layout(0),
             sync_rx,
             sync_footer: SyncFooterState::new(),
+            network_status: NetworkStatusState::new(),
             week_offset: 0,
             last_navigation_at: None,
         }
@@ -50,6 +56,7 @@ impl App {
         self.handle_layout_action();
         if matches!(event, AppEvent::Tick) {
             self.reset_after_idle();
+            self.refresh_network_status();
             self.apply_sync_footer();
         }
     }
@@ -138,6 +145,35 @@ impl App {
             NodeName::other(crate::SYNC_CHANGES_NODE),
             self.sync_footer.latest_changes.clone(),
         );
+        self.layout.set_text_by_name(
+            NodeName::other(crate::NETWORK_STATUS_NODE),
+            self.network_status.label(),
+        );
+        self.layout.set_icon_by_name(
+            NodeName::other(crate::NETWORK_ICON_NODE),
+            if self.network_status.online {
+                "32/wifi"
+            } else {
+                "32/wifi--off"
+            },
+        );
+        self.layout.set_text_color_by_name(
+            NodeName::other(crate::NETWORK_ICON_NODE),
+            self.network_status.color(),
+        );
+        self.layout.set_text_color_by_name(
+            NodeName::other(crate::NETWORK_STATUS_NODE),
+            self.network_status.color(),
+        );
+    }
+
+    fn refresh_network_status(&mut self) {
+        if !self.network_status.should_refresh() {
+            return;
+        }
+
+        self.network_status.online = probe_network();
+        self.network_status.last_checked_at = Some(Instant::now());
     }
 
     fn rebuild_layout(&mut self) {
@@ -189,6 +225,49 @@ struct SyncFooterState {
     latest_changes: String,
 }
 
+struct NetworkStatusState {
+    online: bool,
+    last_checked_at: Option<Instant>,
+}
+
+impl NetworkStatusState {
+    fn new() -> Self {
+        Self {
+            online: false,
+            last_checked_at: None,
+        }
+    }
+
+    fn should_refresh(&self) -> bool {
+        self.last_checked_at
+            .is_none_or(|checked_at| checked_at.elapsed() >= StdDuration::from_secs(30))
+    }
+
+    fn label(&self) -> &'static str {
+        if self.online { "online" } else { "offline" }
+    }
+
+    fn color(&self) -> tiny_skia::Color {
+        if self.online {
+            THEME.success
+        } else {
+            THEME.danger
+        }
+    }
+}
+
+fn probe_network() -> bool {
+    // ponytail: this only probes public DNS over TCP; if captive portals or filtered networks matter,
+    // replace it with a configurable endpoint or the future Wi-Fi management flow.
+    const PROBE_TIMEOUT: StdDuration = StdDuration::from_millis(750);
+    const PROBE_TARGETS: [([u8; 4], u16); 2] = [([1, 1, 1, 1], 53), ([8, 8, 8, 8], 53)];
+
+    PROBE_TARGETS
+        .into_iter()
+        .map(SocketAddr::from)
+        .any(|addr| TcpStream::connect_timeout(&addr, PROBE_TIMEOUT).is_ok())
+}
+
 impl SyncFooterState {
     fn new() -> Self {
         Self {
@@ -217,4 +296,20 @@ fn format_changes(changes: &[CalendarChange]) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn network_status_refreshes_immediately_then_waits() {
+        let mut status = NetworkStatusState::new();
+
+        assert!(status.should_refresh());
+
+        status.last_checked_at = Some(Instant::now());
+
+        assert!(!status.should_refresh());
+    }
 }

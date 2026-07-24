@@ -36,6 +36,8 @@ use crate::{
 pub(crate) const SYNC_ICON_NODE: &str = "sync-icon";
 pub(crate) const SYNC_STATUS_NODE: &str = "sync-status";
 pub(crate) const SYNC_CHANGES_NODE: &str = "sync-changes";
+pub(crate) const NETWORK_ICON_NODE: &str = "network-icon";
+pub(crate) const NETWORK_STATUS_NODE: &str = "network-status";
 pub(crate) const VERSION_NODE: &str = "version";
 
 #[cfg(debug_assertions)]
@@ -212,9 +214,26 @@ fn build_layout(
                 }),
         )
         .child(
+            icon("32/wifi")
+                .name(node::NodeName::other(NETWORK_ICON_NODE))
+                .width(18.)
+                .height(18.)
+                .text_color(THEME.text)
+                .px(5.),
+        )
+        .child(
+            text("checking network")
+                .name(node::NodeName::other(NETWORK_STATUS_NODE))
+                .width_auto()
+                .px(8.)
+                .text_color(THEME.text)
+                .text_align(Align::Right),
+        )
+        .child(
             text(footer_version_text())
                 .name(node::NodeName::other(VERSION_NODE))
                 .width_auto()
+                .px(8.)
                 .text_color(THEME.text)
                 .text_align(Align::Right),
         )

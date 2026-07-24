@@ -903,7 +903,7 @@ fn sync_calendar(
     calendar: &Calendar,
     previous_year: u32,
 ) -> Result<SyncCalendarResult, Box<dyn Error>> {
-    let input = download_ical(&calendar.url);
+    let input = download_ical(&calendar.url)?;
     parse_calendar_items(&input, previous_year)
 }
 
@@ -1191,13 +1191,8 @@ fn remote_profile_id(profile_name: &str) -> Uuid {
 //     println!("Hello, world! Total count: {}", c);
 // }
 
-fn download_ical(url: &str) -> String {
-    ureq::get(url)
-        .call()
-        .unwrap()
-        .body_mut()
-        .read_to_string()
-        .unwrap()
+fn download_ical(url: &str) -> Result<String, Box<dyn Error>> {
+    Ok(ureq::get(url).call()?.body_mut().read_to_string()?)
 }
 
 fn get_property_value_by_name(item: &ICalendarComponent, name: ICalendarProperty) -> String {
