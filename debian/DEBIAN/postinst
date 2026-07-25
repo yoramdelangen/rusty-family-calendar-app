@@ -17,6 +17,11 @@ configure)
         fi
     done
 
+    if [ ! -f "/etc/$APP/config.toml" ]; then
+        mkdir -p "/etc/$APP"
+        cp "/usr/share/$APP/config.toml.example" "/etc/$APP/config.toml"
+    fi
+
     chown -R "$APP_USER:$APP_GROUP" "/var/lib/$APP"
     chmod 755 "/var/lib/$APP"
     chmod 755 "/var/lib/$APP/fonts"
