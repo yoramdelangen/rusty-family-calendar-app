@@ -575,7 +575,8 @@ fn init_logging() {
 }
 
 fn footer_version_text() -> String {
-    format!("{APP_VERSION} {}", crate::calendar::configured_log_level())
+    format!("{APP_VERSION}")
+    // format!("{APP_VERSION} {}", crate::calendar::configured_log_level())
 }
 
 fn parse_calendar_datetime(value: &str) -> Result<NaiveDateTime, chrono::ParseError> {
