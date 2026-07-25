@@ -2,6 +2,8 @@
 
 Lightweight family calendar UI for desktop and Raspberry Pi with low CPU rendering. Main goal is to run on a Raspberry PI Zero with a touchscreen device.
 
+Create a profile for a familymember and attach all calenders to the profile.
+
 ## Roadmap
 
 - [ ] Input support (click/press etc).
@@ -10,6 +12,8 @@ Lightweight family calendar UI for desktop and Raspberry Pi with low CPU renderi
 - [ ] Configure WIFI, networkmanager or what is installed on the system.
 - [ ] Web client and server.
 - [ ] DRM only when flag is set.
+- [ ] Filters for calender items text, usefull for recuring items to shorten the text.
+- [ ] Ship more icons, so we can use them for each profile/calendar.
 
 ## Runtime
 
