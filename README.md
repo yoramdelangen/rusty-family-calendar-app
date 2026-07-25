@@ -14,6 +14,8 @@ Create a profile for a familymember and attach all calenders to the profile.
 - [ ] DRM only when flag is set.
 - [ ] Filters for calender items text, usefull for recuring items to shorten the text.
 - [ ] Ship more icons, so we can use them for each profile/calendar.
+- [ ] Add darkmode.
+- [ ] Add brightness (on monitor) support?
 
 ## Runtime
 
