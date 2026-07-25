@@ -5,3 +5,7 @@ assets/fonts/*
 !assets/fonts/.gitkeep
 !assets/fonts/README.md
 calendar.sqlite
+*.deb
+debian/etc/
+debian/usr/
+debian/var/

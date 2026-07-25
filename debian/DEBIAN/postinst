@@ -1,0 +1,28 @@
+#!/bin/sh
+set -e
+
+APP="rusty-calendar-pi"
+APP_USER="$APP"
+APP_GROUP="$APP"
+
+case "$1" in
+configure)
+    if ! id -u "$APP_USER" >/dev/null 2>&1; then
+        useradd --system --home-dir "/var/lib/$APP" --shell /usr/sbin/nologin --user-group "$APP_USER"
+    fi
+
+    for group in video render input; do
+        if getent group "$group" >/dev/null 2>&1; then
+            usermod -a -G "$group" "$APP_USER"
+        fi
+    done
+
+    chown -R "$APP_USER:$APP_GROUP" "/var/lib/$APP"
+    chmod 755 "/var/lib/$APP"
+    chmod 755 "/var/lib/$APP/fonts"
+
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable "$APP.service" >/dev/null 2>&1 || true
+    systemctl start "$APP.service" >/dev/null 2>&1 || true
+    ;;
+esac

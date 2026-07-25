@@ -1,0 +1,10 @@
+Package: rusty-calendar-pi
+Version: 0.1.0
+Section: utils
+Priority: optional
+Architecture: armhf
+Depends: libc6, libegl1, libgles2
+Maintainer: Yoram Delangen
+Description: Small calendar UI for Raspberry Pi with e-paper display
+ A lightweight calendar display that runs directly on DRM/KMS
+ without X11 or Wayland, optimized for low CPU usage.
