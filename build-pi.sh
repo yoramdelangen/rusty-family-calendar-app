@@ -29,7 +29,19 @@ if [ -f "$FONT" ]; then
     cp "$FONT" "$DEB_DIR/var/lib/rusty-calendar-pi/fonts/zed-mono-light.ttf"
 fi
 
-dpkg-deb --build "$DEB_DIR" "$DEB_NAME"
+case "$(uname -s)" in
+Linux)
+    dpkg-deb --build "$DEB_DIR" "$DEB_NAME"
+    ;;
+Darwin)
+    BUILD_DIR=$(mktemp -d)
+    trap 'rm -rf "$BUILD_DIR"' EXIT
+    echo "2.0" > "$BUILD_DIR/debian-binary"
+    tar -czf "$BUILD_DIR/control.tar.gz" -C "$DEB_DIR/DEBIAN" .
+    tar -czf "$BUILD_DIR/data.tar.gz" -C "$DEB_DIR" usr etc var
+    (cd "$BUILD_DIR" && ar rcs "$SCRIPT_DIR/$DEB_NAME" debian-binary control.tar.gz data.tar.gz)
+    ;;
+esac
 
 scp "$DEB_NAME" "$REMOTE:/tmp/$DEB_NAME"
 ssh "$REMOTE" "sudo dpkg -i /tmp/$DEB_NAME && rm -f /tmp/$DEB_NAME"
