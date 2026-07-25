@@ -1,6 +1,15 @@
 # Rusty Calendar Pi
 
-Lightweight calendar UI for desktop and Raspberry Pi with low CPU rendering.
+Lightweight family calendar UI for desktop and Raspberry Pi with low CPU rendering. Main goal is to run on a Raspberry PI Zero with a touchscreen device.
+
+## Roadmap
+
+- [ ] Input support (click/press etc).
+- [ ] Add modal support.
+- [ ] Configuration and adding prolfile/calendar in app.
+- [ ] Configure WIFI, networkmanager or what is installed on the system.
+- [ ] Web client and server.
+- [ ] DRM only when flag is set.
 
 ## Runtime
 
