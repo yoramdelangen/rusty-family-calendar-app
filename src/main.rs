@@ -478,7 +478,7 @@ fn load_calendar_items(
 
     let conn = Connection::open(db_path)?;
     let mut stmt = match conn.prepare(
-        "SELECT sync_items.calendar_id, sync_items.item_label, sync_items.start_at
+        "SELECT sync_items.calendar_id, sync_items.item_label, sync_items.start_at, sync_items.all_day, sync_items.end_at
           FROM sync_items
           JOIN sync_calendars ON sync_calendars.calendar_id = sync_items.calendar_id
           ORDER BY sync_items.start_at",
@@ -496,6 +496,12 @@ fn load_calendar_items(
         let calendar_id: String = row.get(0)?;
         let title: String = row.get(1)?;
         let start_at = parse_calendar_datetime(&row.get::<_, String>(2)?)?;
+        let all_day: bool = row.get(3)?;
+        let end_at = row
+            .get::<_, Option<String>>(4)?
+            .as_deref()
+            .map(parse_calendar_datetime)
+            .transpose()?;
         let style = calendar_style
             .get(&calendar_id)
             .copied()
@@ -504,29 +510,71 @@ fn load_calendar_items(
                 pill: false,
             });
 
-        items_by_date
-            .entry(start_at.date())
-            .or_insert_with(Vec::new)
-            .push(CalendarItem {
-                title,
-                start_at,
-                accent: style.color,
-                pill: style.pill,
-            });
+        let spans_multiple_days = end_at.is_some_and(|value| value.date() > start_at.date());
+        let item = CalendarItem {
+            title,
+            start_at,
+            all_day,
+            spans_multiple_days,
+            accent: style.color,
+            pill: style.pill,
+        };
+
+        for date in calendar_item_dates(start_at.date(), end_at, all_day) {
+            items_by_date
+                .entry(date)
+                .or_insert_with(Vec::new)
+                .push(item.clone());
+        }
     }
 
     Ok(items_by_date)
+}
+
+fn calendar_item_dates(
+    start_date: NaiveDate,
+    end_at: Option<NaiveDateTime>,
+    all_day: bool,
+) -> Vec<NaiveDate> {
+    let Some(end_at) = end_at else {
+        return vec![start_date];
+    };
+
+    let end_date = end_at.date();
+
+    if end_date <= start_date {
+        return vec![start_date];
+    }
+
+    let mut dates = Vec::new();
+    let mut current = start_date;
+
+    let includes_end_date = !all_day;
+
+    while current < end_date || (includes_end_date && current == end_date) {
+        dates.push(current);
+        current = current
+            .checked_add_days(Days::new(1))
+            .expect("invalid all-day item date range");
+    }
+
+    dates
 }
 
 fn render_calendar_item(item: &CalendarItem) -> crate::node::builder::Builder {
     let accent = item.accent;
     let on_accent = readable_on(accent);
     let time = item.start_at.format("%H:%M").to_string();
+    let label = if item.all_day || item.spans_multiple_days {
+        item.title.clone()
+    } else {
+        format!("{time}  {}", item.title)
+    };
 
     trace!(title = %item.title, start_at = %item.start_at, "render calendar item");
 
     if item.pill {
-        return pill(format!("{time}  {}", item.title))
+        return pill(label)
             .width_full()
             .font_size(FONT.sm.clone())
             .text_color(on_accent)
@@ -535,6 +583,36 @@ fn render_calendar_item(item: &CalendarItem) -> crate::node::builder::Builder {
             .layout(|l| {
                 l.margin.top = length(4.);
             });
+    }
+
+    if item.all_day || item.spans_multiple_days {
+        return div()
+            .width_full()
+            .px(4.)
+            .layout(|l| {
+                l.flex_direction = FlexDirection::Row;
+                l.align_items = Some(AlignItems::Center);
+                l.margin.top = length(4.);
+            })
+            .child(
+                icon("16/all-day")
+                    .width(12.)
+                    .height(12.)
+                    .text_color(accent),
+            )
+            .child(
+                text(item.title.clone())
+                    .width(0.)
+                    .font_size(FONT.sm.clone())
+                    .layout(|l| {
+                        l.flex_grow = 1.0;
+                        l.flex_shrink = 1.0;
+                        l.margin.left = length(4.);
+                    })
+                    .ellipsis()
+                    .text_color(accent)
+                    .text_align(Align::Left),
+            );
     }
 
     div()
@@ -604,6 +682,8 @@ fn subtle_today_background() -> Color {
 struct CalendarItem {
     title: String,
     start_at: NaiveDateTime,
+    all_day: bool,
+    spans_multiple_days: bool,
     accent: Color,
     pill: bool,
 }
@@ -632,6 +712,47 @@ mod tests {
         assert!(start <= today);
         assert_eq!(visible_start_for_offset(2) - start, Duration::days(14));
         assert_eq!(start - visible_start_for_offset(-2), Duration::days(14));
+    }
+
+    #[test]
+    fn all_day_item_dates_cover_the_full_range() {
+        let start = NaiveDate::from_ymd_opt(2026, 7, 18).unwrap();
+        let end = NaiveDate::from_ymd_opt(2026, 8, 29)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+
+        let dates = calendar_item_dates(start, Some(end), true);
+
+        assert_eq!(dates.first(), Some(&start));
+        assert_eq!(dates.last(), Some(&NaiveDate::from_ymd_opt(2026, 8, 28).unwrap()));
+        assert_eq!(dates.len(), 42);
+    }
+
+    #[test]
+    fn timed_items_stay_on_the_start_date() {
+        let start = NaiveDate::from_ymd_opt(2026, 7, 18).unwrap();
+        let end = NaiveDate::from_ymd_opt(2026, 7, 18)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+
+        assert_eq!(calendar_item_dates(start, Some(end), false), vec![start]);
+    }
+
+    #[test]
+    fn multi_day_timed_items_cover_each_day_in_the_range() {
+        let start = NaiveDate::from_ymd_opt(2026, 7, 4).unwrap();
+        let end = NaiveDate::from_ymd_opt(2026, 8, 16)
+            .unwrap()
+            .and_hms_opt(19, 0, 0)
+            .unwrap();
+
+        let dates = calendar_item_dates(start, Some(end), false);
+
+        assert_eq!(dates.first(), Some(&start));
+        assert_eq!(dates.last(), Some(&NaiveDate::from_ymd_opt(2026, 8, 16).unwrap()));
+        assert_eq!(dates.len(), 44);
     }
 
     #[test]

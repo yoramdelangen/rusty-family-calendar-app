@@ -42,6 +42,7 @@ pub(crate) struct CalendarItem {
     description: String,
     // summary: String,
     start_at: NaiveDateTime,
+    all_day: bool,
     end_at: Option<NaiveDateTime>,
     created_at: Option<NaiveDateTime>,
     last_modified: Option<NaiveDateTime>,
@@ -428,10 +429,11 @@ fn persist_sync_items_with_ttl(
                 item_label,
                 description,
                 start_at,
+                all_day,
                 end_at,
                 created_at,
                 last_modified
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         )?;
 
         for item in items {
@@ -441,6 +443,7 @@ fn persist_sync_items_with_ttl(
                 item.label.as_str(),
                 item.description.as_str(),
                 format_naive_datetime(&item.start_at),
+                item.all_day,
                 item.end_at.map(|value| format_naive_datetime(&value)),
                 item.created_at.map(|value| format_naive_datetime(&value)),
                 item.last_modified
@@ -459,7 +462,7 @@ fn load_stored_items(
 ) -> Result<Vec<CalendarItem>, Box<dyn Error>> {
     ensure_sync_schema(conn)?;
     let mut stmt = conn.prepare(
-        "SELECT item_uid, item_label, description, start_at, end_at, created_at, last_modified
+        "SELECT item_uid, item_label, description, start_at, all_day, end_at, created_at, last_modified
          FROM sync_items
          WHERE calendar_id = ?1",
     )?;
@@ -468,15 +471,16 @@ fn load_stored_items(
 
     while let Some(row) = rows.next()? {
         let start_at: String = row.get(3)?;
-        let end_at: Option<String> = row.get(4)?;
-        let created_at: Option<String> = row.get(5)?;
-        let last_modified: Option<String> = row.get(6)?;
+        let end_at: Option<String> = row.get(5)?;
+        let created_at: Option<String> = row.get(6)?;
+        let last_modified: Option<String> = row.get(7)?;
 
         items.push(CalendarItem {
             uid: row.get(0)?,
             label: row.get(1)?,
             description: row.get(2)?,
             start_at: parse_stored_datetime(&start_at)?,
+            all_day: row.get(4)?,
             end_at: end_at.as_deref().map(parse_stored_datetime).transpose()?,
             created_at: created_at
                 .as_deref()
@@ -537,6 +541,7 @@ fn calendar_item_changed(old: &CalendarItem, new: &CalendarItem) -> bool {
     old.label != new.label
         || old.description != new.description
         || old.start_at != new.start_at
+        || old.all_day != new.all_day
         || old.end_at != new.end_at
         || old.last_modified != new.last_modified
 }
@@ -559,6 +564,7 @@ fn ensure_sync_schema(conn: &Connection) -> Result<(), Box<dyn Error>> {
             item_label TEXT NOT NULL,
             description TEXT NOT NULL,
             start_at TEXT NOT NULL,
+            all_day INTEGER NOT NULL DEFAULT 0,
             end_at TEXT,
             created_at TEXT,
             last_modified TEXT,
@@ -583,6 +589,13 @@ fn ensure_sync_schema(conn: &Connection) -> Result<(), Box<dyn Error>> {
 
     if !has_column(conn, "sync_items", "calendar_id")? {
         conn.execute("ALTER TABLE sync_items ADD COLUMN calendar_id TEXT", [])?;
+    }
+
+    if !has_column(conn, "sync_items", "all_day")? {
+        conn.execute(
+            "ALTER TABLE sync_items ADD COLUMN all_day INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
 
     Ok(())
@@ -1036,15 +1049,23 @@ fn parse_item(
     tz_resolver: &calcard::icalendar::timezone::TzResolver<String>,
     display_tz: Tz,
 ) -> Option<CalendarItem> {
-    let start_at = get_datetime_by_name(item, ICalendarProperty::Dtstart, tz_resolver, display_tz)?;
+    let start_at =
+        get_datetime_by_name(item, ICalendarProperty::Dtstart, tz_resolver, display_tz)?;
+    let all_day = property_is_all_day(item, ICalendarProperty::Dtstart)?;
 
     Some(CalendarItem {
         uid: get_property_value_by_name(item, ICalendarProperty::Uid),
         label: get_property_value_by_name(item, ICalendarProperty::Summary),
         description: get_property_value_by_name(item, ICalendarProperty::Description),
         start_at,
+        all_day,
         end_at: get_datetime_by_name(item, ICalendarProperty::Dtend, tz_resolver, display_tz),
-        created_at: get_datetime_by_name(item, ICalendarProperty::Created, tz_resolver, display_tz),
+        created_at: get_datetime_by_name(
+            item,
+            ICalendarProperty::Created,
+            tz_resolver,
+            display_tz,
+        ),
         last_modified: get_datetime_by_name(
             item,
             ICalendarProperty::LastModified,
@@ -1358,6 +1379,15 @@ fn get_datetime_by_name(
     }
 }
 
+fn property_is_all_day(item: &ICalendarComponent, name: ICalendarProperty) -> Option<bool> {
+    let entry = item.entries.iter().find(|entry| entry.name == name)?;
+
+    match entry.values.first()? {
+        ICalendarValue::PartialDateTime(dt) => Some(!dt.has_time()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1399,6 +1429,31 @@ END:VCALENDAR";
 
         assert_eq!(items.items.len(), 1);
         assert_eq!(items.items[0].label, "Google item");
+        assert!(!items.items[0].all_day);
+    }
+
+    #[test]
+    fn parses_all_day_items() {
+        let input = "BEGIN:VCALENDAR\n\
+VERSION:2.0\n\
+BEGIN:VEVENT\n\
+UID:whole-day\n\
+SUMMARY:Vrije dag\n\
+DTSTART;VALUE=DATE:20260102\n\
+END:VEVENT\n\
+END:VCALENDAR";
+
+        let items = parse_calendar_items(input, 2025, "Europe/Amsterdam").unwrap();
+
+        assert_eq!(items.items.len(), 1);
+        assert!(items.items[0].all_day);
+        assert_eq!(
+            items.items[0].start_at,
+            chrono::NaiveDate::from_ymd_opt(2026, 1, 2)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -1514,6 +1569,7 @@ END:VCALENDAR";
                 .unwrap()
                 .and_hms_opt(9, 0, 0)
                 .unwrap(),
+            all_day: false,
             end_at: None,
             created_at: None,
             last_modified: None,
@@ -1546,12 +1602,16 @@ END:VCALENDAR";
         let calendar_id: String = conn
             .query_row("SELECT calendar_id FROM sync_items", [], |row| row.get(0))
             .unwrap();
+        let all_day: bool = conn
+            .query_row("SELECT all_day FROM sync_items", [], |row| row.get(0))
+            .unwrap();
 
         assert_eq!(calendar_row.0, calendar.id.to_string());
         assert_eq!(calendar_row.1, profile_id.to_string());
         assert_eq!(stored_synced_at, format_naive_datetime(&synced_at));
         assert_eq!(count, 1);
         assert_eq!(calendar_id, calendar.id.to_string());
+        assert!(!all_day);
     }
 
     #[test]
@@ -1586,6 +1646,7 @@ END:VCALENDAR";
                 .unwrap()
                 .and_hms_opt(hour, 0, 0)
                 .unwrap(),
+            all_day: false,
             end_at: None,
             created_at: None,
             last_modified: None,
