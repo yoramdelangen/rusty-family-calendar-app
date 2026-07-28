@@ -4,7 +4,7 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, Local, NaiveDate, Utc};
 use taffy::{Dimension, Size};
 
 use crate::{
@@ -17,6 +17,7 @@ use crate::{
 };
 
 pub(crate) struct App {
+    today: NaiveDate,
     layout: AppLayout,
     sync_rx: Receiver<SyncStatus>,
     sync_footer: SyncFooterState,
@@ -27,8 +28,10 @@ pub(crate) struct App {
 
 impl App {
     pub(crate) fn new(sync_rx: Receiver<SyncStatus>) -> Self {
+        let today = Local::now().date_naive();
         Self {
-            layout: crate::build_app_layout(0),
+            today,
+            layout: crate::build_app_layout(0, today.clone()),
             sync_rx,
             sync_footer: SyncFooterState::new(),
             network_status: NetworkStatusState::new(),
@@ -58,6 +61,7 @@ impl App {
             self.reset_after_idle();
             self.refresh_network_status();
             self.apply_sync_footer();
+            self.update_today();
         }
     }
 
@@ -67,6 +71,14 @@ impl App {
 
     pub(crate) fn draw(&mut self, buffer: &mut [u32], window_width: u32, window_height: u32) {
         self.layout.draw(buffer, window_width, window_height);
+    }
+
+    pub(crate) fn update_today(&mut self) {
+        let now = Local::now().date_naive();
+        if now.ne(&self.today) {
+            self.today = now;
+            self.layout.queue_action(LayoutAction::ChangeToday);
+        }
     }
 
     fn handle_sync_status(&mut self, status: SyncStatus) -> bool {
@@ -177,7 +189,7 @@ impl App {
     }
 
     fn rebuild_layout(&mut self) {
-        self.layout = crate::build_app_layout(self.week_offset);
+        self.layout = crate::build_app_layout(self.week_offset, self.today);
         self.apply_sync_footer();
     }
 
@@ -199,6 +211,9 @@ impl App {
 
                 self.week_offset = 0;
                 self.last_navigation_at = None;
+                self.rebuild_layout();
+            }
+            LayoutAction::ChangeToday => {
                 self.rebuild_layout();
             }
         }

@@ -280,15 +280,13 @@ fn launch_app() {
     renderer::run(app::App::new(sync_rx));
 }
 
-pub(crate) fn build_app_layout(week_offset: i64) -> AppLayout {
+pub(crate) fn build_app_layout(week_offset: i64, today: NaiveDate) -> AppLayout {
     let mut layout = AppLayout::new();
     let visible_start = visible_start_for_offset(week_offset);
 
     let (_header, content, _footer) = build_layout(&mut layout, visible_start, week_offset);
     let config = crate::calendar::read_config().expect("failed to load config");
     let items_by_date = load_calendar_items(&config).expect("failed to load calendar items");
-
-    let today = Local::now().date_naive();
 
     let headers = get_weekdays();
     grid("calendar_weekday", CAL_COLS + 1, None)
@@ -297,6 +295,7 @@ pub(crate) fn build_app_layout(week_offset: i64) -> AppLayout {
         .border_color(THEME.border)
         .border_b(1.)
         .layout(|l| {
+            // force the first column to be 33. pixels width
             l.grid_template_columns[0] = length(33.);
         })
         .children(

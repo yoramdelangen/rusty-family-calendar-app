@@ -26,6 +26,7 @@ pub(crate) struct AppLayout {
 pub(crate) enum LayoutAction {
     ShiftWeeks(i64),
     ResetWeeks,
+    ChangeToday,
 }
 
 impl AppLayout {
