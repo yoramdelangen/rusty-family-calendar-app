@@ -5,6 +5,7 @@ use std::{
     io::{self, Write},
     panic,
     path::PathBuf,
+    str::FromStr,
     sync::mpsc::{self, Receiver, Sender},
     thread,
     time::Duration,
@@ -13,9 +14,10 @@ use std::{
 use argh::FromArgs;
 use calcard::{
     Parser,
+    common::timezone::Tz,
     icalendar::{ICalendarComponent, ICalendarComponentType, ICalendarProperty, ICalendarValue},
 };
-use chrono::{DateTime, Datelike, NaiveDateTime, Utc};
+use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Utc};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
@@ -122,6 +124,8 @@ pub(crate) struct ConfigCalendar {
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub(crate) struct Config {
+    #[serde(default = "default_timezone")]
+    pub(crate) timezone: String,
     #[serde(default = "default_log_level")]
     pub(crate) log_level: String,
     pub(crate) profile: Vec<ConfigProfile>,
@@ -146,7 +150,7 @@ pub(crate) fn sync(
             uid: remote_calendar_id.to_string(),
             url: calendar_cfg.url.clone(),
             label: calendar_cfg.label.clone(),
-            timezone: String::new(),
+            timezone: config.timezone.clone(),
             publish_ttl: None,
         };
 
@@ -169,7 +173,11 @@ pub(crate) fn sync(
         );
     }
 
-    info!(calendars = synced_calendars, items = synced_items, "sync finished");
+    info!(
+        calendars = synced_calendars,
+        items = synced_items,
+        "sync finished"
+    );
     Ok(())
 }
 
@@ -205,6 +213,7 @@ fn sync_worker(tx: Sender<SyncStatus>) -> Result<(), Box<dyn Error>> {
         .map(|(profile, calendar)| WorkerCalendar {
             profile_name: profile.name.clone(),
             calendar: calendar.clone(),
+            timezone: config.timezone.clone(),
             next_sync_at: Utc::now(),
         })
         .collect::<Vec<_>>();
@@ -230,8 +239,11 @@ fn sync_worker(tx: Sender<SyncStatus>) -> Result<(), Box<dyn Error>> {
                 calendar: calendars[index].calendar.label.clone(),
             });
 
-            let result =
-                sync_one_calendar(&calendars[index].profile_name, &calendars[index].calendar);
+            let result = sync_one_calendar(
+                &calendars[index].profile_name,
+                &calendars[index].calendar,
+                &calendars[index].timezone,
+            );
             let status = match result {
                 Ok(outcome) => {
                     calendars[index].next_sync_at = outcome.next_sync_at;
@@ -266,6 +278,7 @@ fn sync_worker(tx: Sender<SyncStatus>) -> Result<(), Box<dyn Error>> {
 struct WorkerCalendar {
     profile_name: String,
     calendar: ConfigCalendar,
+    timezone: String,
     next_sync_at: DateTime<Utc>,
 }
 
@@ -286,6 +299,7 @@ fn next_worker_sync_at(calendars: &[WorkerCalendar]) -> DateTime<Utc> {
 fn sync_one_calendar(
     profile_name: &str,
     calendar_cfg: &ConfigCalendar,
+    timezone: &str,
 ) -> Result<SyncOutcome, Box<dyn Error>> {
     let current_date = Utc::now();
     let previous_year = (current_date.year() - 1) as u32;
@@ -296,7 +310,7 @@ fn sync_one_calendar(
         uid: remote_calendar_id.to_string(),
         url: calendar_cfg.url.clone(),
         label: calendar_cfg.label.clone(),
-        timezone: String::new(),
+        timezone: timezone.to_owned(),
         publish_ttl: None,
     };
 
@@ -656,6 +670,11 @@ pub(crate) fn read_config() -> Result<Config, Box<dyn Error>> {
         save_config(&config)?;
     }
 
+    if config.timezone.trim().is_empty() {
+        config.timezone = default_timezone();
+        save_config(&config)?;
+    }
+
     Ok(config)
 }
 
@@ -737,10 +756,15 @@ const DEFAULT_CONFIG: &str = r#"# Rusty Calendar Pi
 # Profiles own the color.
 # Calendars live under each profile and point at sync URLs.
 
+timezone = "Europe/Amsterdam"
 log_level = "info"
 
 profile = []
 "#;
+
+fn default_timezone() -> String {
+    "Europe/Amsterdam".to_owned()
+}
 
 fn default_log_level() -> String {
     "info".to_owned()
@@ -904,7 +928,7 @@ fn sync_calendar(
     previous_year: u32,
 ) -> Result<SyncCalendarResult, Box<dyn Error>> {
     let input = download_ical(&calendar.url)?;
-    parse_calendar_items(&input, previous_year)
+    parse_calendar_items(&input, previous_year, &calendar.timezone)
 }
 
 struct SyncCalendarResult {
@@ -915,14 +939,20 @@ struct SyncCalendarResult {
 fn parse_calendar_items(
     input: &str,
     previous_year: u32,
+    timezone: &str,
 ) -> Result<SyncCalendarResult, Box<dyn Error>> {
     let mut parser = Parser::new(&input);
     let mut items = Vec::new();
     let mut published_ttl_seconds = None;
+    let display_tz = parse_timezone(timezone)?;
 
     loop {
         match parser.entry() {
             calcard::Entry::ICalendar(ical) => {
+                let tz_resolver = ical
+                    .build_owned_tz_resolver()
+                    .with_default(calendar_timezone(&ical).unwrap_or(display_tz));
+
                 for component in ical.components {
                     if matches!(component.component_type, ICalendarComponentType::VCalendar) {
                         published_ttl_seconds = get_optional_property_value_by_name(
@@ -938,7 +968,7 @@ fn parse_calendar_items(
                         continue;
                     }
 
-                    let Some(item) = parse_item(&component) else {
+                    let Some(item) = parse_item(&component, &tz_resolver, display_tz) else {
                         continue;
                     };
 
@@ -1001,18 +1031,44 @@ fn format_naive_datetime(value: &NaiveDateTime) -> String {
     value.format("%Y-%m-%d %H:%M:%S%.f").to_string()
 }
 
-fn parse_item(item: &ICalendarComponent) -> Option<CalendarItem> {
-    let start_at = get_datetime_by_name(item, ICalendarProperty::Dtstart)?;
+fn parse_item(
+    item: &ICalendarComponent,
+    tz_resolver: &calcard::icalendar::timezone::TzResolver<String>,
+    display_tz: Tz,
+) -> Option<CalendarItem> {
+    let start_at = get_datetime_by_name(item, ICalendarProperty::Dtstart, tz_resolver, display_tz)?;
 
     Some(CalendarItem {
         uid: get_property_value_by_name(item, ICalendarProperty::Uid),
         label: get_property_value_by_name(item, ICalendarProperty::Summary),
         description: get_property_value_by_name(item, ICalendarProperty::Description),
         start_at,
-        end_at: get_datetime_by_name(item, ICalendarProperty::Dtend),
-        created_at: get_datetime_by_name(item, ICalendarProperty::Created),
-        last_modified: get_datetime_by_name(item, ICalendarProperty::LastModified),
+        end_at: get_datetime_by_name(item, ICalendarProperty::Dtend, tz_resolver, display_tz),
+        created_at: get_datetime_by_name(item, ICalendarProperty::Created, tz_resolver, display_tz),
+        last_modified: get_datetime_by_name(
+            item,
+            ICalendarProperty::LastModified,
+            tz_resolver,
+            display_tz,
+        ),
     })
+}
+
+fn calendar_timezone(ical: &calcard::icalendar::ICalendar) -> Option<Tz> {
+    ical.components
+        .iter()
+        .find(|component| matches!(component.component_type, ICalendarComponentType::VCalendar))
+        .and_then(|component| {
+            get_optional_property_value_by_name(
+                component,
+                ICalendarProperty::Other("X-WR-TIMEZONE".to_owned()),
+            )
+        })
+        .and_then(|timezone| parse_timezone(&timezone).ok())
+}
+
+fn parse_timezone(value: &str) -> Result<Tz, Box<dyn Error>> {
+    Tz::from_str(value).map_err(|_| other_error(format!("invalid timezone: {value}")))
 }
 
 fn remote_calendar_id(profile_name: &str, url: &str) -> Uuid {
@@ -1192,7 +1248,14 @@ fn remote_profile_id(profile_name: &str) -> Uuid {
 // }
 
 fn download_ical(url: &str) -> Result<String, Box<dyn Error>> {
-    Ok(ureq::get(url).call()?.body_mut().read_to_string()?)
+    let config = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(15)))
+        .timeout_global(Some(Duration::from_secs(30)))
+        .build();
+
+    let agent: ureq::Agent = config.into();
+
+    Ok(agent.get(url).call()?.body_mut().read_to_string()?)
 }
 
 fn get_property_value_by_name(item: &ICalendarComponent, name: ICalendarProperty) -> String {
@@ -1260,11 +1323,21 @@ fn get_optional_property_value_by_name(
 fn get_datetime_by_name(
     item: &ICalendarComponent,
     name: ICalendarProperty,
+    tz_resolver: &calcard::icalendar::timezone::TzResolver<String>,
+    display_tz: Tz,
 ) -> Option<NaiveDateTime> {
     let en = item.entries.iter().find(|e| e.name == name);
     match en {
         Some(entry) => match entry.values.first().unwrap() {
-            ICalendarValue::PartialDateTime(dt) => Some(dt.to_date_time().unwrap().date_time),
+            ICalendarValue::PartialDateTime(dt) => {
+                let source_tz = dt
+                    .to_date_time()
+                    .and_then(|date_time| date_time.tz())
+                    .unwrap_or_else(|| tz_resolver.resolve_or_default(entry.tz_id()));
+
+                dt.to_date_time_with_tz(source_tz)
+                    .map(|date_time| display_tz.from_utc_datetime(&date_time.naive_utc()).naive_local())
+            }
             // ICalendarValue::Duration(icalendar_duration) => todo!(),
             // ICalendarValue::RecurrenceRule(icalendar_recurrence_rule) => todo!(),
             // ICalendarValue::Period(icalendar_period) => todo!(),
@@ -1322,7 +1395,7 @@ LAST-MODIFIED:20200101T090000Z\n\
 END:VEVENT\n\
 END:VCALENDAR";
 
-        let items = parse_calendar_items(input, 2025).unwrap();
+        let items = parse_calendar_items(input, 2025, "Europe/Amsterdam").unwrap();
 
         assert_eq!(items.items.len(), 1);
         assert_eq!(items.items[0].label, "Google item");
@@ -1334,6 +1407,22 @@ END:VCALENDAR";
         assert_eq!(parse_ical_duration_seconds("PT1H"), Some(60 * 60));
         assert_eq!(parse_ical_duration_seconds("P1D"), Some(24 * 60 * 60));
         assert_eq!(parse_ical_duration_seconds("nope"), None);
+    }
+
+    #[test]
+    fn converts_utc_event_into_configured_timezone() {
+        let input = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:test\nSUMMARY:Sport fysio -Tim\nDTSTART:20260727T090000Z\nEND:VEVENT\nEND:VCALENDAR\n";
+
+        let items = parse_calendar_items(input, 2025, "Europe/Amsterdam").unwrap();
+
+        assert_eq!(items.items.len(), 1);
+        assert_eq!(
+            items.items[0].start_at,
+            chrono::NaiveDate::from_ymd_opt(2026, 7, 27)
+                .unwrap()
+                .and_hms_opt(11, 0, 0)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -1366,6 +1455,7 @@ END:VCALENDAR";
     #[test]
     fn selects_all_calendars_by_default() {
         let config = Config {
+            timezone: default_timezone(),
             log_level: default_log_level(),
             profile: vec![
                 ConfigProfile {
